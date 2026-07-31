@@ -30,7 +30,7 @@ import {
   paintFarmSky, paintRidges, paintHillside, paintTerrace, paintForSale,
   paintStream, paintFog, paintLanterns,
 } from './farm-scene.js';
-import { paintPlant, paintSoil, paintTrellis } from './plant-art.js';
+import { paintPlant, paintSoil, paintTrellis, paintGlint } from './plant-art.js';
 import { makeEffects, pruneEffects, resetEffects, dropletAt, floatAt, FX } from './effects.js';
 import { paintChip } from './chips.js';
 import { sfx } from './sfx.js';
@@ -44,13 +44,22 @@ const N = TUNING.plotsPerTerrace;
 const POUR_MS = 520;
 const POUR_COOLDOWN_MS = 900;
 
-export function makeFarmHost({ canvas, save, getSettings, wallNow, loop, rng }) {
+// The one scripted camera move in the game: after the first appraisal the view
+// rises off the road to the terrace that is for sale. Long enough to read as a
+// place rather than a transition, short enough that nobody waits for it — and
+// interruptible, because the whole opening is skippable by simply doing the
+// thing it is pointing at.
+const PAN_MS = 1500;
+const PAN_FROM = 150;      // world units below the settled view
+
+export function makeFarmHost({ canvas, save, getSettings, wallNow, loop, rng, onFarmBought }) {
   const fx = makeEffects();
   const pouring = new Map();          // plot key → t0, for the pour arc
   let openPlot = null;                // { ti, pi } while the plot sheet is up
   let openTerrace = null;             // terrace index while the for-sale sheet is up
   let scale = 1, offX = 0, offY = 0;
   let live = false;
+  let panFrom = null;        // performance.now() while the opening pan runs
 
   const ctx = canvas.getContext('2d');
 
@@ -67,6 +76,10 @@ export function makeFarmHost({ canvas, save, getSettings, wallNow, loop, rng }) 
     offY = (canvas.height - WORLD.height * scale) / 2;
   }
 
+  // Screen → world. It does NOT account for the opening pan, because onTap
+  // lands the camera before it converts: a tap during a camera move must hit
+  // what the player is looking at when it stops, not what was under their
+  // finger mid-flight.
   function toWorld(clientX, clientY) {
     const rect = canvas.getBoundingClientRect();
     const dpr = canvas.width / rect.width;
@@ -87,7 +100,7 @@ export function makeFarmHost({ canvas, save, getSettings, wallNow, loop, rng }) 
 
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     paintFarmSky(ctx, th, canvas.width, canvas.height);
-    ctx.setTransform(scale, 0, 0, scale, offX, offY);
+    ctx.setTransform(scale, 0, 0, scale, offX, offY + panOffset(tMs) * scale);
 
     paintRidges(ctx, th);
     paintHillside(ctx, th);
@@ -96,12 +109,28 @@ export function makeFarmHost({ canvas, save, getSettings, wallNow, loop, rng }) 
     // Bottom terrace first: each band's wall overlaps the one below it, so the
     // hillside reads as stacked rather than as stripes.
     for (let i = 0; i < FARM_SCENE.bands; i++) paintTerrace(ctx, th, i, i < owned);
-    if (c.farm) for (const p of eachPlot(c.farm)) drawPlot(p, tMs, motion);
+    if (c.farm) {
+      const plots = eachPlot(c.farm);
+      const thirstyGlints = !plots.some(({ plot }) => isRipe(plot));
+      for (const p of plots) drawPlot(p, tMs, motion, thirstyGlints);
+    }
 
     // One thing for sale at a time — the next shelf up the mountain, or, before
     // there is a farm at all, the bottom one with the whole farm attached to it.
     const forSale = forSaleIndex(c);
-    if (forSale != null) paintForSale(ctx, th, forSale);
+    if (forSale != null) {
+      paintForSale(ctx, th, forSale);
+      // A glint on the sign while it is affordable — the same "tap me" the ripe
+      // fruit wears, because it is the same instruction.
+      const price = c.farm ? priceOfTerrace(forSale) : priceOfEquipment('farm');
+      if (canBuy(c.cash, price)) {
+        const box = forSaleBox(forSale);
+        ctx.save();
+        ctx.translate(box.x + box.w * 0.5, box.y + box.h);
+        paintGlint(ctx, box.h, tMs, motion);
+        ctx.restore();
+      }
+    }
 
     pruneEffects(fx, tMs);
     drawPour(tMs);
@@ -110,7 +139,7 @@ export function makeFarmHost({ canvas, save, getSettings, wallNow, loop, rng }) 
     drawFloats(tMs, settings);
   }
 
-  function drawPlot({ ti, pi, plot, watered }, tMs, motion) {
+  function drawPlot({ ti, pi, plot, watered }, tMs, motion, thirstyGlints) {
     const g = plotGeom(ti, pi, N);
     const wet = watered || plot.wateredUntilMs > wallNow();
     ctx.save();
@@ -121,6 +150,11 @@ export function makeFarmHost({ canvas, save, getSettings, wallNow, loop, rng }) 
       kind: plot.kind, level: plot.level, progress: progressOf(plot),
       mature: plot.mature, ripe: isRipe(plot), trellis: plot.trellis,
     }, g.h, { tMs, motion });
+    // Thirst glints only when there is nothing ripe anywhere. It is the same
+    // instruction as a ripe glint — one tap, here — and scoping it this way
+    // keeps the guidance of the opening without a farm in full production
+    // twinkling at the player from every dry bed it owns.
+    if (thirstyGlints && !wet && plot.kind && !isRipe(plot)) paintGlint(ctx, g.h * 0.7, tMs, motion);
     ctx.restore();
   }
 
@@ -200,6 +234,7 @@ export function makeFarmHost({ canvas, save, getSettings, wallNow, loop, rng }) 
 
   function onTap(clientX, clientY) {
     if (!live) return;
+    panFrom = null;                 // a tap lands the camera at once
     const c = save.get();
     if (c.farm) evaluateFarm(c.farm, wallNow());
     const { x, y } = toWorld(clientX, clientY);
@@ -306,6 +341,7 @@ export function makeFarmHost({ canvas, save, getSettings, wallNow, loop, rng }) 
         save.flush();
         closeSheets();
         refresh();
+        if (first && onFarmBought) onFarmBought();
       },
     }]);
   }
@@ -513,6 +549,24 @@ export function makeFarmHost({ canvas, save, getSettings, wallNow, loop, rng }) 
     }
   }
 
+  // ── the opening pan ────────────────────────────────────────────────────
+
+  // Where the camera is, in world units below where it settles. Closed-form off
+  // the host clock like every other animation in this game, so a dropped frame
+  // cannot leave the view stranded halfway up the mountain.
+  function panOffset(tMs) {
+    if (panFrom == null) return 0;
+    const u = (tMs - panFrom) / PAN_MS;
+    if (u >= 1) { panFrom = null; return 0; }
+    if (u <= 0) return PAN_FROM;
+    return PAN_FROM * (1 - u) * (1 - u) * (1 - u);      // ease out, and settle
+  }
+
+  function panUp() {
+    if (getSettings().reducedMotion) return;   // the farm is simply there
+    panFrom = performance.now();
+  }
+
   function inBox(box, x, y) {
     return x >= box.x && x <= box.x + box.w && y >= box.y && y <= box.y + box.h;
   }
@@ -573,7 +627,7 @@ export function makeFarmHost({ canvas, save, getSettings, wallNow, loop, rng }) 
   $('plot-close').addEventListener('click', () => { sfx('menu-click'); closeSheets(); });
 
   return {
-    enter, exit, resize, draw, refresh,
+    enter, exit, resize, draw, refresh, panUp,
     // WP10's staging asks these: what is worth pointing a glint at.
     isLive: () => live,
     nextRipeMs: () => {

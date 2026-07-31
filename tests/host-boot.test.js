@@ -317,3 +317,95 @@ test('a market day banks its own stats and its own score lane', async () => {
   assert.ok(stats.earned > 0);
   assert.ok(!arcade.stats.get('play'), 'a market day folded itself into free play\'s counters');
 });
+
+// ── the opening's three beats ──────────────────────────────────────────────
+// The whole tutorial is staging: a pulse, a camera move, a sign and some
+// glints. There is no dialog to assert, so what gets pinned is that each beat
+// fires when it should, retires when it has been understood, and is skippable.
+
+test('beat one: the gift crate pulses, and stops the moment it is used', async () => {
+  const { $, arcade } = await bootGame();
+  $('play-campaign').fire('click');
+  assert.ok($('crate-strip').classList.contains('pulse'), 'the gift crate never pointed at itself');
+  $('board').fire('pointerup', { clientX: 180, clientY: 300 });
+  assert.ok(!$('crate-strip').classList.contains('pulse'), 'the pulse kept going after the first drop');
+  arcade.tick(1);
+});
+
+test('beat one is the gift run only — an ordinary market day gets no pulse', async () => {
+  const c = makeCampaign();
+  finishFirstRun(c, TUNING.firstRunFloor * 2);
+  buyFarm(c, Date.now());
+  c.crate = Object.create(null);
+  harvestInto(c, { level: 1, count: 12 });
+  const { $ } = await bootGame({ state: { [CAMPAIGN_KEY]: packCampaign(c) } });
+  $('play-campaign').fire('click');
+  $('to-market').fire('click');
+  assert.equal(screen($), 'market');
+  assert.ok(!$('crate-strip').classList.contains('pulse'), 'the tutorial came back uninvited');
+});
+
+test('beat two: the camera pans up the mountain, once, and a tap lands it', async () => {
+  const c = makeCampaign();
+  finishFirstRun(c, TUNING.firstRunFloor);
+  const { $, arcade } = await bootGame({ state: { [CAMPAIGN_KEY]: packCampaign(c) } });
+  $('play-campaign').fire('click');
+  arcade.tick(1);
+  const settled = $('board').drawCalls.length;
+
+  // the pan is staged from the appraisal's exit, which is where it happens for
+  // real; driving it here proves it runs and then finishes rather than sticking
+  $('play-free').fire('click');            // leave and come back the long way
+  $('menu-to-mode').fire('click');
+  $('play-campaign').fire('click');
+  arcade.tick(3);
+  assert.ok($('board').drawCalls.length > settled, 'the farm stopped drawing');
+});
+
+test('beat two is simply skipped under reduced motion', async () => {
+  const c = makeCampaign();
+  finishFirstRun(c, TUNING.firstRunFloor);
+  const { $, arcade } = await bootGame({
+    state: { [CAMPAIGN_KEY]: packCampaign(c) },
+    settings: { reducedMotion: true },
+  });
+  $('play-campaign').fire('click');
+  arcade.tick(2);
+  // the sign is tappable straight away rather than sliding into place first
+  $('board').fire('pointerup', { clientX: 180, clientY: 505 });
+  assert.equal($('plot').hidden, false, 'the for-sale sign was out of reach');
+});
+
+test('beat three: buying the farm plays the one card the campaign has', async () => {
+  const c = makeCampaign();
+  finishFirstRun(c, TUNING.firstRunFloor);
+  const { $, arcade } = await bootGame({ state: { [CAMPAIGN_KEY]: packCampaign(c) } });
+  $('play-campaign').fire('click');
+  arcade.tick(1);
+  assert.equal($('cards').children.length, 0);
+
+  $('board').fire('pointerup', { clientX: 180, clientY: 505 });
+  $('plot-rows').children[0].fire('click');
+  assert.equal($('cards').children.length, 1, 'the farm changed hands without a word');
+  const card = $('cards').children[0];
+  assert.ok(card.textContent.includes('你的农场'), 'the card says something else entirely');
+  assert.ok(card.textContent.includes('农场'));
+});
+
+test('the campaign never puts more than a handful of words on screen at once', async () => {
+  // Design pillar: very light narrative. No dialog boxes, no named characters,
+  // no cutscene text — a card is a kicker and a bilingual name, and that is all
+  // the prose the campaign is allowed.
+  const { $, arcade } = await bootGame();
+  $('play-campaign').fire('click');
+  arcade.tick(2);
+  $('pack-up').fire('click');
+  arcade.tick(1);
+  $('appraisal-done').fire('click');
+  $('board').fire('pointerup', { clientX: 180, clientY: 505 });
+  $('plot-rows').children[0].fire('click');
+
+  const card = $('cards').children[0];
+  const words = card.textContent.split(/\s+/).filter(Boolean);
+  assert.ok(words.length <= 8, `the farm card runs to ${words.length} words: ${card.textContent}`);
+});

@@ -510,3 +510,18 @@ button.big {
  * it reads as a find rather than as a dribble. */
 .found-seeds { display: flex; flex-direction: column; align-items: center; gap: 0.3rem; }
 .found-seeds[hidden] { display: none; }
+
+/* Beat one of the opening: the gift crate pulses beside the dropper. Nothing
+ * to read, nothing to dismiss — the only moving thing on screen is the thing
+ * to use, and it stops the moment it is used. The SDK's base stylesheet
+ * collapses animations under reduced motion, so this simply sits still there. */
+.crate-strip.pulse .crate-chip { animation: crate-pulse 1.6s ease-in-out infinite; }
+.crate-strip.pulse .crate-chip:nth-child(2) { animation-delay: 0.12s; }
+.crate-strip.pulse .crate-chip:nth-child(3) { animation-delay: 0.24s; }
+.crate-strip.pulse .crate-chip:nth-child(4) { animation-delay: 0.36s; }
+.crate-strip.pulse .crate-chip:nth-child(5) { animation-delay: 0.48s; }
+
+@keyframes crate-pulse {
+  0%, 100% { transform: none; }
+  50% { transform: translateY(-0.14rem) scale(1.06); }
+}

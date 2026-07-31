@@ -145,15 +145,32 @@ export function queueSeedCards(levels) {
   pumpCards();
 }
 
+// The one narrated moment in the campaign, and it is four words on the card
+// idiom the game already has. The art is the cherry, because the cherry tree is
+// literally what the player just bought.
+function queueFarmCard() {
+  cardQueue.push({
+    level: 1, kicker: 'Your farm! 你的农场!',
+    hanzi: '农场', pinyin: 'nóngchǎng', en: 'Farm', score: null,
+  });
+  pumpCards();
+}
+
 function pumpCards() {
   if (cardShowing || !cardQueue.length) return;
   showCard(cardQueue.shift());
 }
 
+// A card is a kicker, one piece of art and a bilingual name. Three things in
+// the game are exactly that shape — a fruit made for the first time, a seed
+// unlocked, and the farm changing hands — so they are one card with three sets
+// of words rather than three overlays. `entry` is a bare level for the common
+// case, or { level, kicker, hanzi, pinyin, en, score } to override the words.
 function showCard(entry) {
-  const level = typeof entry === 'number' ? entry : entry.level;
-  const kicker = typeof entry === 'number' ? 'First one! 第一次!' : entry.kicker;
-  const f = FRUITS[level - 1];
+  const spec = typeof entry === 'number' ? { level: entry } : entry;
+  const level = spec.level;
+  const kicker = spec.kicker || 'First one! 第一次!';
+  const f = { ...FRUITS[level - 1], ...spec };
   const card = document.createElement('div');
   card.className = 'card';
   card.innerHTML =
@@ -170,9 +187,9 @@ function showCard(entry) {
   card.querySelector('.card-kicker').textContent = kicker;
   card.querySelector('.card-hanzi').textContent = f.hanzi;
   card.querySelector('.card-pinyin').textContent = f.pinyin;
-  card.querySelector('.card-en').textContent = f.name;
-  card.querySelector('.card-score').textContent = `+${f.score}`;
-  card.setAttribute('aria-label', `New fruit discovered: ${f.hanzi} ${f.pinyin}, ${f.name}, plus ${f.score} points`);
+  card.querySelector('.card-en').textContent = f.en || f.name;
+  card.querySelector('.card-score').textContent = spec.score === null ? '' : `+${f.score}`;
+  card.setAttribute('aria-label', `${kicker} ${f.hanzi} ${f.pinyin}, ${f.en || f.name}`);
 
   const art = card.querySelector('.card-art');
   art.setAttribute('aria-label', f.name);
@@ -522,6 +539,7 @@ const farm = makeFarmHost({
   wallNow,
   loop: farmLoop,
   rng,
+  onFarmBought: queueFarmCard,
 });
 
 const market = makeMarketHost({
@@ -558,8 +576,13 @@ function paintModeBadge() {
 function toMarket() {
   clearCards();
   hideChainBanner();
+  const gift = campaignSave.get().phase === 'gift-run';
   if (!market.begin()) return;
   router.route('market');
+  // Beat one: the gift crate pulses beside the dropper. There is nothing to
+  // read and nothing to dismiss — the only thing on screen that moves is the
+  // thing the player is meant to use, and it stops the moment they use it.
+  $('crate-strip').classList.toggle('pulse', gift);
 }
 
 function toCampaign() {
@@ -578,10 +601,18 @@ $('play-free').addEventListener('click', () => { sfx('menu-click'); router.route
 $('menu-to-mode').addEventListener('click', () => { sfx('menu-click'); router.route('mode'); });
 $('farm-to-menu').addEventListener('click', () => { sfx('menu-click'); router.route('mode'); });
 $('to-market').addEventListener('click', () => { sfx('menu-click'); toMarket(); });
+// The pulse retires on the first drop, not on a timer: it was pointing at
+// something, and it has been understood.
+canvas.addEventListener('pointerup', () => $('crate-strip').classList.remove('pulse'));
+
 $('pack-up').addEventListener('click', () => { sfx('menu-click'); market.finishRun('packed'); });
 $('appraisal-done').addEventListener('click', () => {
   sfx('menu-click');
   const c = campaignSave.get();
+  // Beat two: the first time, the view pans up off the road to the weedy
+  // terrace with the 出售 sign on it. One scripted camera move in the whole
+  // game, and it exists so that "there is a farm up there" needs no sentence.
+  if (c.phase === 'buy-farm') farm.panUp();
   // After the gift run the farm is for sale, and buying it is the only move —
   // so the appraisal hands the player straight to it (js/farm-host.js stages
   // the 出售 sign) rather than asking them to find it.

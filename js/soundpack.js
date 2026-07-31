@@ -51,6 +51,18 @@
     'discover': 0.25,
     'game-over': 0.34,
     'menu-click': 0.12,
+    // The farm. It is outdoors on a mountainside rather than under an awning,
+    // so everything on that half of the game sits a little further back — the
+    // same room, heard across a terrace instead of over a counter.
+    'water': 0.34,
+    'plant': 0.26,
+    'harvest': 0.30,
+    'ripe-chime': 0.40,
+    'coin': 0.14,
+    'till': 0.30,
+    'buy': 0.16,
+    'terrace-fanfare': 0.46,
+    'pack-up': 0.30,
   };
 
   // Fired on literally every turn — must register as texture, not event.
@@ -242,6 +254,135 @@
       S.thump(ctx, o, t, { f0: 240 * S.cents(r, 25), f1: 150, dur: 0.05, gain: 0.07 });
     },
   };
+
+  // ── the farm ─────────────────────────────────────────────────────────────
+  //
+  // The second half of the game gets no new materials. Wood and water-in-skin
+  // built the stall; the farm is the same two heard outdoors, plus the one
+  // thing a market has that an orchard does not — coins on a plank counter,
+  // which are just very small, very hard strikes.
+  //
+  // Nothing here is a jingle. The farm's whole promise is that it never asks
+  // anything of the player, and a sound that congratulates you for showing up
+  // is a retention mechanic with a melody.
+
+  Object.assign(CUES, {
+    // Water out of a can onto turned earth. A soft noise wash that opens and
+    // closes (the pour) with droplets landing through it. The farm's most
+    // repeated interaction, so like 'drop' it must read as texture.
+    'water': function (ctx, o, t, p, r) {
+      S.squelch(ctx, o, t, {
+        sf0: 900, sf1: 420, lp: 2600, dur: 0.42, gain: CONSTANT * 1.5,
+        seed: (r() * 1e6) | 0,
+      });
+      for (let i = 0; i < 4; i++) {
+        S.droplet(ctx, o, t + 0.04 + i * S.between(r, 0.05, 0.11), {
+          f0: S.between(r, 380, 700), f1: S.between(r, 1100, 2200),
+          dur: 0.05, gain: CONSTANT * 0.7,
+        });
+      }
+      S.thump(ctx, o, t + 0.06, { f0: 120 * S.cents(r, 30), f1: 70, dur: 0.16, gain: CONSTANT * 0.6 });
+    },
+
+    // A seed into soil: a small dry press, no ring at all. The quietest cue in
+    // the pack — planting is a gesture, not an achievement.
+    'plant': function (ctx, o, t, p, r) {
+      S.strike(ctx, o, t, { dur: 0.006, hp: 900, gain: CONSTANT * 0.7, seed: (r() * 1e6) | 0 });
+      S.thump(ctx, o, t + 0.005, { f0: 150 * S.cents(r, 25), f1: 82, dur: 0.09, gain: CONSTANT * 0.9 });
+    },
+
+    // Fruit coming off the plant and into the crate. Pitched by level exactly
+    // as merges are, out of the same mergeVoice table — so the ear learns the
+    // chain on the farm and in the stall as one progression, which it is.
+    'harvest': function (ctx, o, t, p, r) {
+      const level = p && p.level ? p.level : 3;
+      const v = mergeVoice(Math.max(2, level));
+      // the stem giving — a short, dry version of the merge squelch
+      S.squelch(ctx, o, t, {
+        sf0: v.f0 * 1.2, sf1: v.f0 * 0.7, lp: v.lp * 1.4,
+        dur: v.dur * 0.5, gain: v.gain * 0.7, seed: (r() * 1e6) | 0,
+      });
+      // …and the fruit landing in the crate, on wood
+      S.thump(ctx, o, t + 0.07, { f0: v.wf * S.cents(r, 20), f1: v.wf * 0.6, dur: 0.16, gain: v.gain * 0.8 });
+      flesh(ctx, o, t + 0.09, r, v.f0 * 0.85, v.gain * 0.35, 0.24);
+    },
+
+    // Walking in on something ready to pick. The discovery figure, softer and
+    // further off — a greeting across the terraces, never a summons. Played
+    // once on entering the farm and only when there is genuinely something
+    // ripe; there is no version of this that fires because you stayed away.
+    'ripe-chime': function (ctx, o, t, p, r) {
+      const base = 392 * S.cents(r, 10);
+      flesh(ctx, o, t, r, base, 0.055, 0.55);
+      flesh(ctx, o, t + 0.16, r, base * 1.5, 0.05, 0.8);
+      S.droplet(ctx, o, t + 0.26, { f0: base * 2.4, f1: base * 5, dur: 0.07, gain: 0.03 });
+    },
+
+    // One coin onto the counter as the appraisal counts up. Fired many times a
+    // second, so it is the smallest sound in the pack by a distance: a tiny
+    // bright strike and a click of a ring. Anything more becomes a machine gun.
+    'coin': function (ctx, o, t, p, r) {
+      S.strike(ctx, o, t, { dur: 0.003, hp: 5200, gain: CONSTANT * 0.5, seed: (r() * 1e6) | 0 });
+      S.body(ctx, o, t, {
+        f0: 2600 * S.cents(r, 60), gain: CONSTANT * 0.35,
+        partials: [{ ratio: 1.0, gain: 1.0, decay: 0.05, detune: 8 },
+          { ratio: 2.76, gain: 0.4, decay: 0.03, detune: 12 }],
+      });
+    },
+
+    // The total lands: the coins are swept off the counter into the till. One
+    // wooden drawer closing under a handful of metal.
+    'till': function (ctx, o, t, p, r) {
+      for (let i = 0; i < 5; i++) {
+        S.strike(ctx, o, t + i * S.between(r, 0.008, 0.022), {
+          dur: 0.003, hp: 4200, gain: 0.05, seed: (r() * 1e6) | 0,
+        });
+      }
+      S.thump(ctx, o, t + 0.10, { f0: 130 * S.cents(r, 15), f1: 62, dur: 0.30, gain: 0.16 });
+      S.creak(ctx, o, t + 0.10, {
+        f0: 280 * S.cents(r, 20), f1: 180, Q: 5, dur: 0.22, gain: 0.05,
+        seed: (r() * 1e6) | 0,
+      });
+    },
+
+    // Money leaving the till for something. The click of the drawer plus one
+    // coin — deliberately the same family as 'till', a beat instead of a
+    // sentence, because buying happens constantly in the shop.
+    'buy': function (ctx, o, t, p, r) {
+      S.strike(ctx, o, t, { dur: 0.004, hp: 3800, gain: 0.07, seed: (r() * 1e6) | 0 });
+      S.thump(ctx, o, t + 0.01, { f0: 180 * S.cents(r, 20), f1: 96, dur: 0.10, gain: 0.09 });
+    },
+
+    // A whole terrace bought, or the stream turned onto the farm. The one
+    // genuinely celebratory cue on this side of the game: the watermelon's
+    // rising figure, lower and slower, heard across the mountainside rather
+    // than in your hands. It fires a handful of times in a whole campaign.
+    'terrace-fanfare': function (ctx, o, t, p, r) {
+      S.thump(ctx, o, t, { f0: 64 * S.cents(r, 10), f1: 38, dur: 0.8, gain: 0.18 });
+      const base = 147 * S.cents(r, 8);
+      [1, 1.25, 1.5, 2].forEach((ratio, i) => {
+        flesh(ctx, o, t + 0.10 + i * 0.14, r, base * ratio, 0.10, 0.7);
+      });
+      for (let i = 0; i < 4; i++) {
+        S.droplet(ctx, o, t + 0.2 + i * S.between(r, 0.07, 0.12), {
+          f0: S.between(r, 320, 560), f1: S.between(r, 1000, 1900),
+          dur: 0.07, gain: 0.04,
+        });
+      }
+    },
+
+    // Packing up on purpose. Deliberately NOT the game-over creak: the stall
+    // is being put away neatly rather than settling under too much weight, so
+    // it is the same plank heard as a tidy double knock and one contented tone
+    // — the sound of a good day, which it always is.
+    'pack-up': function (ctx, o, t, p, r) {
+      S.strike(ctx, o, t, { dur: 0.005, hp: 1800, gain: 0.09, seed: (r() * 1e6) | 0 });
+      S.thump(ctx, o, t + 0.005, { f0: 170 * S.cents(r, 20), f1: 95, dur: 0.14, gain: 0.11 });
+      S.strike(ctx, o, t + 0.13, { dur: 0.005, hp: 1600, gain: 0.08, seed: (r() * 1e6) | 0 });
+      S.thump(ctx, o, t + 0.135, { f0: 150 * S.cents(r, 20), f1: 84, dur: 0.16, gain: 0.10 });
+      flesh(ctx, o, t + 0.30, r, 196 * S.cents(r, 10), 0.09, 0.7);
+    },
+  });
 
   // Published under the framework's well-known handle so the game's audio
   // module and the launcher's soundpack toolchain both reach it without
