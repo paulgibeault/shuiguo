@@ -1,0 +1,149 @@
+/* shuǐguǒ — cozy fruit-stand chrome around the canvas.
+ * Text sizes in rem so the SDK's --font-scale hook scales everything free;
+ * colors key off [data-theme] which the SDK maintains on <html>. */
+
+:root {
+  --paper: #f7f1e3;
+  --ink: #5a4632;
+  --accent: #d23c50;
+  --card: #fffdf6;
+  --shadow: rgba(90, 70, 50, 0.18);
+}
+[data-theme="dark"] {
+  --paper: #221d16;
+  --ink: #e8dcc8;
+  --accent: #ef6478;
+  --card: #2e2820;
+  --shadow: rgba(0, 0, 0, 0.5);
+}
+
+* { box-sizing: border-box; margin: 0; }
+
+html, body { height: 100%; }
+body {
+  background: var(--paper);
+  color: var(--ink);
+  font-family: "Avenir Next", "Hiragino Sans", system-ui, sans-serif;
+  overflow: hidden;
+  touch-action: none;
+}
+
+.frame {
+  position: relative;
+  height: 100dvh;
+  max-width: 34rem;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+}
+
+#board {
+  flex: 1;
+  width: 100%;
+  min-height: 0;
+  touch-action: none;
+  outline: none;
+}
+
+/* ── HUD ─────────────────────────────────────────────────────────────── */
+#hud {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.5rem 1rem 0.25rem;
+  gap: 0.75rem;
+}
+.stat { display: flex; flex-direction: column; align-items: center; min-width: 4.5rem; }
+.label {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  opacity: 0.65;
+}
+.value { font-size: 1.5rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+.next-box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.15rem;
+  background: var(--card);
+  border-radius: 0.75rem;
+  padding: 0.35rem 0.9rem;
+  box-shadow: 0 2px 8px var(--shadow);
+}
+#next { width: 2.75rem; height: 2.75rem; }
+.next-name { font-size: 0.7rem; opacity: 0.8; }
+
+/* ── sheets (menu / game over) ───────────────────────────────────────── */
+.sheet {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  padding: 2rem 1.5rem;
+  background: color-mix(in srgb, var(--paper) 88%, transparent);
+  backdrop-filter: blur(4px);
+  text-align: center;
+}
+.sheet[hidden] { display: none; }
+
+h1 { font-size: 2.4rem; letter-spacing: 0.02em; }
+h1 .hanzi { color: var(--accent); }
+h2 { font-size: 1.8rem; }
+.tagline { font-size: 1rem; opacity: 0.85; }
+.hint { font-size: 0.8rem; opacity: 0.65; max-width: 22rem; line-height: 1.5; }
+.final { font-size: 1.3rem; }
+.final strong { font-size: 2rem; color: var(--accent); }
+.new-best { color: var(--accent); font-weight: 700; animation: pop 0.5s ease-out; }
+
+@keyframes pop {
+  0% { transform: scale(0.6); opacity: 0; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+button {
+  font: inherit;
+  color: var(--ink);
+  background: var(--card);
+  border: 2px solid var(--ink);
+  border-radius: 999px;
+  padding: 0.5rem 1.6rem;
+  cursor: pointer;
+  box-shadow: 0 3px 0 var(--shadow);
+}
+button:active { transform: translateY(2px); box-shadow: 0 1px 0 var(--shadow); }
+button.big {
+  font-size: 1.3rem;
+  font-weight: 700;
+  background: var(--accent);
+  color: #fff;
+  border-color: color-mix(in srgb, var(--accent) 70%, black);
+  padding: 0.7rem 2.6rem;
+}
+
+/* ── evolution chart ─────────────────────────────────────────────────── */
+.chart {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25rem;
+  max-width: 24rem;
+}
+.chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 50%;
+  background: var(--c);
+  color: #fff;
+  font-size: 0.8rem;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
+  box-shadow: inset 0 -3px 0 rgba(0, 0, 0, 0.18);
+}
+.arrow { font-size: 0.7rem; opacity: 0.5; }

@@ -1,0 +1,27 @@
+# Thin caller for the fleet CI/CD standard. The pipeline lives in the
+# launcher repo (fleet-ci.yml); change it there and every app follows.
+name: CI & Deploy Pages
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write # version_bump pushes the bump commit back to main
+  pages: write
+  id-token: write
+
+# Per-ref, so a PR run never cancels main's deploy.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fleet:
+    uses: paulgibeault/paulgibeault.github.io/.github/workflows/fleet-ci.yml@main
+    with:
+      # The fleet norm for any app with a service worker: CI owns the cache
+      # version (GAME_INTEGRATION.md §10).
+      version_bump: true
