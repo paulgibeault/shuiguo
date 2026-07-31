@@ -1,4 +1,4 @@
-// shuǐguǒ sound pack — the game's own sound design.
+// shuǐ guǒ tān sound pack — the game's own sound design.
 //
 // Loaded as a plain script after /arcade-audio.js. js/sfx.js registers
 // everything here with Arcade.audio; the launcher's tools/soundpack renderer

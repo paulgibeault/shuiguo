@@ -1,4 +1,4 @@
-// shuǐguǒ boot + Arcade SDK wiring.
+// shuǐ guǒ tān boot + Arcade SDK wiring.
 //
 // Boot contract (GAME_INTEGRATION.md §2): everything that reads state waits
 // on Arcade.ready. The render loop is Arcade.loop (fleet standard), timers

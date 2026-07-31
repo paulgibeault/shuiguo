@@ -1,4 +1,4 @@
-// shuǐguǒ — audition timeline.
+// shuǐ guǒ tān — audition timeline.
 //
 // Test material rendered into the audition WAV; NOT part of the shipped pack.
 // Reads the game's own pack, so what is auditioned is literally what plays.

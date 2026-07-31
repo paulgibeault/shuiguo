@@ -1,4 +1,4 @@
-// shuǐguǒ (水果) — fruit table and world constants.
+// shuǐ guǒ tān (水果摊) — fruit table and world constants.
 //
 // Pure data, shared by game logic, renderer, and tests. The fruit chain is the
 // GRD's 11-level progression: relative radii scale from the cherry, score is

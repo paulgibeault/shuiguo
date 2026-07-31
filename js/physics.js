@@ -1,4 +1,4 @@
-// Rigid-circle physics for shuǐguǒ. Pure module — no DOM, runs under
+// Rigid-circle physics for shuǐ guǒ tān. Pure module — no DOM, runs under
 // node --test unchanged.
 //
 // Deliberately small: circles, one open-topped box, impulse resolution with
