@@ -21,6 +21,9 @@ export function makeBody(level, x, y, vx = 0, vy = 0) {
     touched: false,       // has contacted anything (deadline grace, see game.js)
     overSince: null,      // wall-clock ms when its top first crossed the deadline
     lastImpactAt: null,   // wall-clock ms of the last emitted bounce event (game.js)
+    bornAt: null,         // wall-clock ms if this body came from a merge; the
+                          // renderer wears a happy face for a moment after
+                          // (js/fruit-art.js). Never serialized.
   };
 }
 

@@ -2,7 +2,7 @@
 // reshape scoring or sizes.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { FRUITS, MAX_LEVEL, MAX_SPAWN_LEVEL, ANNIHILATE_SCORE, radiusOf, scoreOf, bounceOf, WORLD } from '../js/constants.js';
+import { FRUITS, FACES, MAX_LEVEL, MAX_SPAWN_LEVEL, ANNIHILATE_SCORE, radiusOf, scoreOf, bounceOf, WORLD } from '../js/constants.js';
 
 test('eleven fruit levels, cherry through watermelon', () => {
   assert.equal(MAX_LEVEL, 11);
@@ -31,6 +31,16 @@ test('every fruit has a bounce personality; big fruit never out-bounces small', 
     assert.ok(bounceOf(l) <= bounceOf(l - 1), `${FRUITS[l - 1].name} is not bouncier than its parent`);
   }
   assert.ok(bounceOf(1) > bounceOf(MAX_LEVEL) * 2, 'the cherry/watermelon contrast is legible');
+});
+
+test('every fruit carries its whole palette — the painter has no hex of its own', () => {
+  for (const f of FRUITS) {
+    for (const k of ['color', 'rind', 'face', 'accent', 'leaf']) {
+      assert.match(f[k] || '', /^#[0-9a-f]{6}$/i, `${f.name}.${k} is not a #rrggbb colour`);
+    }
+  }
+  // one row of face parameters per fruit, or a level paints a blank face
+  assert.equal(FACES.length, FRUITS.length);
 });
 
 test('only levels 1-5 spawn; the watermelon fits the box with room to work', () => {
