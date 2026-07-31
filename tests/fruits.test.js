@@ -2,7 +2,7 @@
 // reshape scoring or sizes.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { FRUITS, MAX_LEVEL, MAX_SPAWN_LEVEL, ANNIHILATE_SCORE, radiusOf, scoreOf, WORLD } from '../js/constants.js';
+import { FRUITS, MAX_LEVEL, MAX_SPAWN_LEVEL, ANNIHILATE_SCORE, radiusOf, scoreOf, bounceOf, WORLD } from '../js/constants.js';
 
 test('eleven fruit levels, cherry through watermelon', () => {
   assert.equal(MAX_LEVEL, 11);
@@ -19,6 +19,18 @@ test('radii grow strictly and follow the GRD relative scale', () => {
   const expected = [1.0, 1.4, 1.8, 2.2, 2.6, 3.0, 3.5, 4.0, 4.6, 5.2, 6.0];
   FRUITS.forEach((f, i) => assert.equal(f.scale, expected[i], f.name));
   for (let l = 2; l <= MAX_LEVEL; l++) assert.ok(radiusOf(l) > radiusOf(l - 1));
+});
+
+test('every fruit has a bounce personality; big fruit never out-bounces small', () => {
+  FRUITS.forEach((f) => {
+    assert.equal(typeof f.bounce, 'number', f.name);
+    assert.ok(f.bounce > 0 && f.bounce < 1, `${f.name} bounce ${f.bounce} in (0,1)`);
+    assert.equal(bounceOf(FRUITS.indexOf(f) + 1), f.bounce);
+  });
+  for (let l = 2; l <= MAX_LEVEL; l++) {
+    assert.ok(bounceOf(l) <= bounceOf(l - 1), `${FRUITS[l - 1].name} is not bouncier than its parent`);
+  }
+  assert.ok(bounceOf(1) > bounceOf(MAX_LEVEL) * 2, 'the cherry/watermelon contrast is legible');
 });
 
 test('only levels 1-5 spawn; the watermelon fits the box with room to work', () => {

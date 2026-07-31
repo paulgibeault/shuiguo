@@ -3,11 +3,11 @@
 // under node --test.
 //
 // States: 'menu' → 'playing' → 'over'. The turn loop (GRD §1): spawn into the
-// NEXT preview, promote to the dropper, aim, drop, physics until settle,
+// NEXT preview, promote to the dropper, aim, drop, a short input cooldown,
 // merge chains resolve, deadline check, repeat.
 
 import { WORLD, RULES, MAX_LEVEL, MAX_SPAWN_LEVEL, ANNIHILATE_SCORE, radiusOf, scoreOf } from './constants.js';
-import { makeBody, step, settled } from './physics.js';
+import { makeBody, step } from './physics.js';
 
 export function makeGame({ rng, now }) {
   const g = {
@@ -74,19 +74,31 @@ export function drop(g, x) {
 export function tick(g, dt) {
   if (g.state !== 'playing') return;
 
-  const contacts = step(g.bodies, dt);
-  resolveMerges(g, contacts);
+  const { mergeable, impacts } = step(g.bodies, dt);
+  emitImpacts(g, impacts);
+  resolveMerges(g, mergeable);
 
-  // Input unlock: the GRD re-enables input when everything settles; the time
-  // cap keeps a micro-jittering pile from soft-locking the dropper.
-  if (!g.canDrop) {
-    if (settled(g.bodies) || g.now() - g.lockedAt >= RULES.dropLockMaxMs) {
-      g.canDrop = true;
-      g.lockedAt = null;
-    }
+  // Input unlock: a flat cooldown, not a settle-wait. Waiting on the pile to
+  // stop moving cost the player up to 1.5 s a turn and got worse the bouncier
+  // the fruit got; a fixed window keeps the cadence honest and predictable.
+  if (!g.canDrop && g.now() - g.lockedAt >= RULES.dropCooldownMs) {
+    g.canDrop = true;
+    g.lockedAt = null;
   }
 
   checkDeadline(g);
+}
+
+// Landings → bounce events for the juice layer, rate-limited per body so a
+// pile shuffling itself into place doesn't fire hundreds of squashes a second.
+function emitImpacts(g, impacts) {
+  if (!impacts.length) return;
+  const t = g.now();
+  for (const { body, speed, nx, ny } of impacts) {
+    if (body.lastImpactAt != null && t - body.lastImpactAt < RULES.impactEventMs) continue;
+    body.lastImpactAt = t;
+    g.events.push({ type: 'bounce', id: body.id, level: body.level, x: body.x, y: body.y, speed, nx, ny });
+  }
 }
 
 // Merge every contacting same-level pair, then keep scanning so a freshly
@@ -117,7 +129,8 @@ function resolveMerges(g, firstContacts) {
       g.bodies.push(nb);
       g.score += scoreOf(born);
       if (born === MAX_LEVEL) g.tally.watermelons++;
-      g.events.push({ type: 'merge', level: born, x: mx, y: my, score: scoreOf(born), chain });
+      // `id` lets the renderer key the newborn's pop animation to this body
+      g.events.push({ type: 'merge', id: nb.id, level: born, x: mx, y: my, score: scoreOf(born), chain });
     }
     // rescan: did any newborn land touching its own level?
     pairs = [];
