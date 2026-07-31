@@ -1,27 +1,24 @@
-// Canvas renderer for shuǐguǒ — cute fruits with kawaii faces in an open box.
+// Canvas renderer for shuǐguǒ — the fruit stall and everything in it.
 // Pure drawing; reads game state, never mutates it. Honors the launcher
 // settings snapshot it is handed ({ theme, fontScale, reducedMotion }).
+//
+// This file is now composition, not artwork. The fruit come from
+// js/fruit-art.js (the single painter shared with the NEXT preview and the
+// menu chart) and the stall from js/scene.js; what lives here is the draw
+// ORDER, the world↔canvas transform, and the game-state readings that pick a
+// fruit's expression and the danger feedback.
 //
 // Ephemeral juice (merge pops, droplets, score floats, landing squash) lives
 // in the host-owned effects list from js/effects.js and is read here through
 // closed-form helpers — nothing in this file mutates it either.
 
-import { WORLD, FRUITS, RULES, radiusOf } from './constants.js';
+import { WORLD, RULES, radiusOf } from './constants.js';
 import { inDanger } from './game.js';
 import { dropletAt, floatAt, popScale, squashAmount } from './effects.js';
-
-const THEMES = {
-  light: {
-    bg: '#f7f1e3', wall: '#c9a97a', wallEdge: '#a9835a', floor: '#c9a97a',
-    deadline: '#d23c50', text: '#5a4632', guide: 'rgba(90,70,50,0.25)',
-    ghost: 'rgba(90,70,50,0.35)',
-  },
-  dark: {
-    bg: '#221d16', wall: '#6b543a', wallEdge: '#8a7050', floor: '#6b543a',
-    deadline: '#ef6478', text: '#e8dcc8', guide: 'rgba(232,220,200,0.25)',
-    ghost: 'rgba(232,220,200,0.35)',
-  },
-};
+import { paintFruit, expressionFor } from './fruit-art.js';
+import {
+  SCENE, themeOf, paintSky, paintSkyline, paintStall, paintAwning, paintLanterns, paintLeaf,
+} from './scene.js';
 
 const EMPTY_FX = { droplets: [], floats: [], pops: new Map(), squashes: new Map() };
 
@@ -33,15 +30,19 @@ export function makeRenderer(canvas) {
   const ctx = canvas.getContext('2d');
   let scale = 1, offX = 0, offY = 0;
 
+  // The view is fitted to the world PLUS the stall's side planks, which live
+  // just outside it (x < 0 and x > WORLD.width). Fitting the bare world hid
+  // them on any viewport where width is the binding dimension — which is every
+  // phone in portrait, i.e. the way the game is actually played.
+  const VIEW_W = WORLD.width + 2 * SCENE.wall;
+
   function resize() {
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     const rect = canvas.getBoundingClientRect();
     canvas.width = Math.round(rect.width * dpr);
     canvas.height = Math.round(rect.height * dpr);
-    const sx = canvas.width / WORLD.width;
-    const sy = canvas.height / WORLD.height;
-    scale = Math.min(sx, sy);
-    offX = (canvas.width - WORLD.width * scale) / 2;
+    scale = Math.min(canvas.width / VIEW_W, canvas.height / WORLD.height);
+    offX = (canvas.width - VIEW_W * scale) / 2 + SCENE.wall * scale;
     offY = (canvas.height - WORLD.height * scale) / 2;
   }
 
@@ -53,14 +54,21 @@ export function makeRenderer(canvas) {
   }
 
   function draw(g, settings, tMs, fx = EMPTY_FX) {
-    const th = THEMES[settings.theme === 'dark' ? 'dark' : 'light'];
+    const th = themeOf(settings);
     const motion = settings.reducedMotion ? 0 : 1;
+
     ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.fillStyle = th.bg;
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    paintSky(ctx, th, canvas.width, canvas.height);
     ctx.setTransform(scale, 0, 0, scale, offX, offY);
 
-    drawBox(th);
+    // the world, back to front: far rooftops, the stall itself, the canopy and
+    // its lanterns, then one drifting leaf — all of it behind every fruit.
+    paintSkyline(ctx, th);
+    paintStall(ctx, th);
+    paintAwning(ctx, th);
+    paintLanterns(ctx, th, tMs, motion);
+    paintLeaf(ctx, th, tMs, motion);
+
     drawDeadline(g, th, tMs, motion);
     if (g.state === 'playing') drawGhost(g, th);
 
@@ -72,10 +80,9 @@ export function makeRenderer(canvas) {
     for (const b of g.bodies) {
       const born = fx.pops.get(b.id);
       const sq = fx.squashes.get(b.id);
-      drawFruit(b.level, b.x, b.y, b.r, b.angle, motion, {
+      drawBody(b, tMs, motion, settings.reducedMotion, {
         scale: born != null ? popScale(born, tMs) : 1,
         squash: sq ? squashAmount(sq, tMs) : 0,
-        worried: b.overSince != null,
       });
     }
     ctx.restore();
@@ -95,11 +102,35 @@ export function makeRenderer(canvas) {
       ctx.stroke();
       ctx.setLineDash([]);
       ctx.globalAlpha = heldAlpha(g, tMs);
-      drawFruit(g.current, g.dropX, WORLD.dropperY, r, 0, motion);
+      ctx.save();
+      ctx.translate(g.dropX, WORLD.dropperY);
+      paintFruit(ctx, g.current, r);
+      ctx.restore();
       ctx.globalAlpha = 1;
     }
 
     drawVignette(overMs);
+  }
+
+  // One body: the caller's pop/squash transform, then the shared painter.
+  // Squash is applied in world-vertical, BEFORE the roll, so a landing
+  // flattens against the floor rather than against the fruit's own spin. The
+  // pre-translate anchors it to the fruit's bottom edge — scaling about the
+  // centre would lift a squashed fruit off the very floor it just hit.
+  function drawBody(b, tMs, motion, reducedMotion, t) {
+    ctx.save();
+    ctx.translate(b.x, b.y);
+    const e = t.squash || 0;
+    if (e !== 0) {
+      ctx.translate(0, b.r * e);
+      ctx.scale(1 + e * 0.8, 1 - e);
+    }
+    if (t.scale !== 1) ctx.scale(t.scale, t.scale);
+    paintFruit(ctx, b.level, b.r, {
+      angle: motion ? b.angle : 0,
+      expression: expressionFor(b, tMs, !motion),
+    });
+    ctx.restore();
   }
 
   // The held fruit dims while input is locked and eases back in over the last
@@ -110,18 +141,6 @@ export function makeRenderer(canvas) {
     const left = RULES.dropCooldownMs - (tMs - g.lockedAt);
     if (left > 100) return 0.45;
     return 0.45 + 0.55 * clamp01((100 - left) / 100);
-  }
-
-  function drawBox(th) {
-    const w = 10;
-    ctx.fillStyle = th.wall;
-    ctx.fillRect(-w, WORLD.deadlineY - 20, w, WORLD.floorY - WORLD.deadlineY + 20 + w);
-    ctx.fillRect(WORLD.width, WORLD.deadlineY - 20, w, WORLD.floorY - WORLD.deadlineY + 20 + w);
-    ctx.fillStyle = th.floor;
-    ctx.fillRect(-w, WORLD.floorY, WORLD.width + 2 * w, w);
-    ctx.strokeStyle = th.wallEdge;
-    ctx.lineWidth = 1.5;
-    ctx.strokeRect(-w, WORLD.deadlineY - 20, WORLD.width + 2 * w, WORLD.floorY - WORLD.deadlineY + 20 + w);
   }
 
   function drawDeadline(g, th, tMs, motion) {
@@ -209,80 +228,7 @@ export function makeRenderer(canvas) {
     ctx.fillRect(0, 0, canvas.width, canvas.height);
   }
 
-  function drawFruit(level, x, y, r, angle, motion, opts) {
-    const f = FRUITS[level - 1];
-    const pop = opts && opts.scale ? opts.scale : 1;
-    const e = opts ? (opts.squash || 0) : 0;
-    ctx.save();
-    ctx.translate(x, y);
-    // Squash is applied in world-vertical, before the roll, so a landing
-    // flattens against the floor rather than against the fruit's own spin.
-    // The pre-translate anchors it to the fruit's BOTTOM edge — scaling about
-    // the centre would lift a squashed fruit off the very floor it just hit.
-    if (e !== 0) {
-      ctx.translate(0, r * e);
-      ctx.scale(1 + e * 0.8, 1 - e);
-    }
-    if (pop !== 1) ctx.scale(pop, pop);
-    ctx.rotate(motion ? angle : 0);
-
-    // body
-    ctx.fillStyle = f.color;
-    ctx.beginPath();
-    ctx.arc(0, 0, r, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.strokeStyle = f.rind;
-    ctx.lineWidth = Math.max(1.5, r * 0.06);
-    ctx.stroke();
-
-    // watermelon stripes / pineapple crosshatch — tiny identity touches
-    if (level === 11) {
-      ctx.strokeStyle = f.rind;
-      ctx.lineWidth = r * 0.12;
-      for (let i = -2; i <= 2; i++) {
-        ctx.beginPath();
-        ctx.moveTo(i * r * 0.38, -r * 0.9);
-        ctx.quadraticCurveTo(i * r * 0.55, 0, i * r * 0.38, r * 0.9);
-        ctx.stroke();
-      }
-    } else if (level === 9) {
-      ctx.strokeStyle = f.rind;
-      ctx.lineWidth = r * 0.04;
-      for (let i = -2; i <= 2; i++) {
-        ctx.beginPath(); ctx.moveTo(-r, i * r * 0.4 - r * 0.2); ctx.lineTo(r, i * r * 0.4 + r * 0.2); ctx.stroke();
-        ctx.beginPath(); ctx.moveTo(-r, i * r * 0.4 + r * 0.2); ctx.lineTo(r, i * r * 0.4 - r * 0.2); ctx.stroke();
-      }
-    }
-
-    // highlight
-    ctx.fillStyle = 'rgba(255,255,255,0.28)';
-    ctx.beginPath();
-    ctx.ellipse(-r * 0.35, -r * 0.4, r * 0.22, r * 0.14, -0.6, 0, Math.PI * 2);
-    ctx.fill();
-
-    // kawaii face — scales with the fruit. Over the line, the eyes go wide and
-    // the smile flips: a placeholder for WP2's real expression system.
-    const worried = !!(opts && opts.worried);
-    const fr = r * 0.5;
-    const eye = Math.max(1.2, fr * (worried ? 0.2 : 0.13));
-    ctx.fillStyle = f.face;
-    ctx.beginPath(); ctx.arc(-fr * 0.5, -fr * 0.15, eye, 0, Math.PI * 2); ctx.fill();
-    ctx.beginPath(); ctx.arc(fr * 0.5, -fr * 0.15, eye, 0, Math.PI * 2); ctx.fill();
-    ctx.strokeStyle = f.face;
-    ctx.lineWidth = Math.max(1, fr * 0.09);
-    ctx.beginPath();
-    if (worried) ctx.arc(0, fr * 0.55, fr * 0.3, 1.15 * Math.PI, 1.85 * Math.PI);
-    else ctx.arc(0, fr * 0.15, fr * 0.3, 0.15 * Math.PI, 0.85 * Math.PI);
-    ctx.stroke();
-    // blush
-    ctx.fillStyle = 'rgba(255,120,120,0.35)';
-    ctx.beginPath(); ctx.arc(-fr * 0.85, fr * 0.15, fr * 0.18, 0, Math.PI * 2); ctx.fill();
-    ctx.beginPath(); ctx.arc(fr * 0.85, fr * 0.15, fr * 0.18, 0, Math.PI * 2); ctx.fill();
-
-    ctx.restore();
-  }
-
-  return { resize, draw, toWorldX, drawFruit };
+  return { resize, draw, toWorldX };
 }
 
 // Longest continuous time any fruit has spent over the line, in ms.

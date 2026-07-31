@@ -35,6 +35,28 @@ kebab-case identity rule. Diacritics and hanzi live only in UI strings.
   landings squash, and the board reddens and trembles as the line closes in —
   all of it gated off by the launcher's reduced-motion setting.
 
+## Look
+
+Every fruit is a character: its own silhouette (conical strawberry, egg-shaped
+pear, squat persimmon), its own texture (seeds, netting, pebbling, crosshatch)
+and its own accessory (stems, calyxes, a pineapple crown, a grape tendril).
+Faces are per-fruit too — a sleepy grape, a stoic watermelon — and they stay
+**upright while the bodies roll**, so a churning pile still reads. A fruit
+blinks every few seconds, grins for half a second after a merge, and looks
+worried while it is over the line.
+
+The board is a wooden stall under a scalloped awning, whose fringe hangs just
+above the deadline: "the pile reached the line" and "the stall is full to the
+canopy" are the same picture. Dark theme is the same stall in the evening,
+lit by two paper lanterns. A leaf drifts through every half minute or so.
+
+It is all procedural canvas drawing — no sprites, no image files — from one
+painter (`js/fruit-art.js`) shared by the board, the NEXT preview and the menu
+chart, over one scene (`js/scene.js`). Both are pure modules that touch nothing
+but the 2D context they are handed, so they test under `node --test` against a
+stub. Fruit colours and face parameters live in the `FRUITS` / `FACES` tables
+in `js/constants.js`; the painters hold no palette of their own.
+
 ## Integration
 
 Standard fleet game: evergreen `/arcade-sdk.js`, `Arcade.loop` render loop,

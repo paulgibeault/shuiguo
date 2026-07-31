@@ -4,11 +4,12 @@
 // on Arcade.ready. The render loop is Arcade.loop (fleet standard), timers
 // honor suspend, saves flush synchronously in onSuspend.
 
-import { WORLD, FRUITS, PHYS, radiusOf } from './constants.js';
+import { FRUITS, PHYS, radiusOf } from './constants.js';
 import { makeGame, start, tick, serialize, restore } from './game.js';
 import { makeRenderer } from './render.js';
 import { bindInput } from './input.js';
 import { makeEffects, pushEvent, pruneEffects, resetEffects } from './effects.js';
+import { paintFruit } from './fruit-art.js';
 import { sfx } from './sfx.js';
 import { makeRng } from './arcade-rng.js';
 
@@ -52,34 +53,32 @@ function refreshHud() {
 }
 
 function drawNext() {
-  const nctx = nextCanvas.getContext('2d');
-  const dpr = Math.min(window.devicePixelRatio || 1, 2);
-  const size = nextCanvas.clientWidth || 44;
-  if (nextCanvas.width !== size * dpr) { nextCanvas.width = size * dpr; nextCanvas.height = size * dpr; }
-  nctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  nctx.clearRect(0, 0, size, size);
-  nctx.save();
-  nctx.translate(size / 2, size / 2);
-  const targetR = size * 0.36;
-  const worldR = radiusOf(g.next);
-  nctx.scale(targetR / worldR, targetR / worldR);
-  paintFruitOn(nctx, g.next, worldR);
-  nctx.restore();
+  paintChip(nextCanvas, g.next, 0.34);
 }
 
-// Minimal standalone fruit painter for the preview (the board renderer's
-// painter is bound to the board context).
-function paintFruitOn(ctx2, level, r) {
-  const f = FRUITS[level - 1];
-  ctx2.fillStyle = f.color;
-  ctx2.beginPath(); ctx2.arc(0, 0, r, 0, Math.PI * 2); ctx2.fill();
-  ctx2.strokeStyle = f.rind; ctx2.lineWidth = Math.max(1.5, r * 0.06); ctx2.stroke();
-  const fr = r * 0.5;
-  ctx2.fillStyle = f.face;
-  ctx2.beginPath(); ctx2.arc(-fr * 0.5, -fr * 0.15, Math.max(1.2, fr * 0.13), 0, Math.PI * 2); ctx2.fill();
-  ctx2.beginPath(); ctx2.arc(fr * 0.5, -fr * 0.15, Math.max(1.2, fr * 0.13), 0, Math.PI * 2); ctx2.fill();
-  ctx2.strokeStyle = f.face; ctx2.lineWidth = Math.max(1, fr * 0.09);
-  ctx2.beginPath(); ctx2.arc(0, fr * 0.15, fr * 0.3, 0.15 * Math.PI, 0.85 * Math.PI); ctx2.stroke();
+// Draw one fruit, alone and centred, filling a small square canvas. Used by
+// the NEXT preview and by every chip in the menu's evolution chart — the SAME
+// painter the board uses, so a fruit is recognisably itself everywhere.
+//
+// `share` is the fruit's radius as a fraction of the canvas: it must leave
+// room for the accessories, which reach past r (see ART.maxExtent).
+function paintChip(el, level, share) {
+  const cctx = el.getContext('2d');
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const size = el.clientWidth || 44;
+  const px = Math.round(size * dpr);
+  if (el.width !== px) { el.width = px; el.height = px; }
+  cctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  cctx.clearRect(0, 0, size, size);
+  cctx.save();
+  // Accessories grow upward, so drop the centre a little to keep a pineapple
+  // crown or a cherry stem inside the box.
+  cctx.translate(size / 2, size * 0.56);
+  const worldR = radiusOf(level);
+  const k = (size * share) / worldR;
+  cctx.scale(k, k);
+  paintFruit(cctx, level, worldR);
+  cctx.restore();
 }
 
 // ── screens ────────────────────────────────────────────────────────────────
@@ -185,7 +184,12 @@ Arcade.onResume(() => {
   else loop.kick();
 });
 
-Arcade.onSettingsChange(() => { pullSettings(); applyResize(); loop.kick(); });
+Arcade.onSettingsChange(() => {
+  pullSettings();
+  buildChart();          // chip canvases are sized from CSS, which follows --font-scale
+  applyResize();
+  loop.kick();
+});
 
 Arcade.onStateReplaced(() => {
   // Treat like a fresh boot: recompute everything from storage.
@@ -199,15 +203,26 @@ window.addEventListener('resize', applyResize);
 function drawIdle() { R.draw(g, settings, performance.now(), fx); }
 
 // ── evolution chart on the menu ────────────────────────────────────────────
+// Real fruit, drawn by the real painter — the chart is where a player learns
+// what they are chasing, so flat coloured discs were selling the chain short.
 function buildChart() {
   const holder = $('chart');
   holder.textContent = '';
   FRUITS.forEach((f, i) => {
-    const cell = document.createElement('span');
+    const cell = document.createElement('figure');
     cell.className = 'chip';
-    cell.style.setProperty('--c', f.color);
     cell.title = `${f.name} · ${f.pinyin} · +${f.score}`;
-    cell.textContent = f.hanzi;
+
+    const c = document.createElement('canvas');
+    c.className = 'chip-art';
+    c.setAttribute('role', 'img');
+    c.setAttribute('aria-label', f.name);
+    cell.appendChild(c);
+
+    const cap = document.createElement('figcaption');
+    cap.textContent = f.hanzi;
+    cell.appendChild(cap);
+
     holder.appendChild(cell);
     if (i < FRUITS.length - 1) {
       const arrow = document.createElement('span');
@@ -215,6 +230,8 @@ function buildChart() {
       arrow.textContent = '→';
       holder.appendChild(arrow);
     }
+    // after layout, so clientWidth is the CSS size (which follows --font-scale)
+    paintChip(c, i + 1, 0.3);
   });
 }
 

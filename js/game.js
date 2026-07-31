@@ -108,6 +108,7 @@ function resolveMerges(g, firstContacts) {
   let chain = 0;
   let pairs = firstContacts;
   const dead = new Set();
+  const t = g.now();
   for (let guard = 0; guard < 24 && pairs.length; guard++) {
     for (const [a, b] of pairs) {
       if (dead.has(a.id) || dead.has(b.id)) continue;
@@ -126,6 +127,7 @@ function resolveMerges(g, firstContacts) {
       const born = a.level + 1;
       const nb = makeBody(born, mx, my, (a.vx + b.vx) / 2, (a.vy + b.vy) / 2);
       nb.touched = true;
+      nb.bornAt = t;              // the renderer's cue for a moment of delight
       g.bodies.push(nb);
       g.score += scoreOf(born);
       if (born === MAX_LEVEL) g.tally.watermelons++;
