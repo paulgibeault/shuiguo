@@ -39,11 +39,12 @@ test('fruits never interpenetrate at rest and never leave the box', () => {
 
 test('a big fruit displaces a small one, not vice versa', () => {
   const small = makeBody(1, 100, WORLD.floorY - radiusOf(1));
-  const big = makeBody(8, 100, WORLD.dropperY);
+  const big = makeBody(8, 106, WORLD.dropperY);   // slightly off-center hit
   const bodies = [small, big];
   run(bodies, 3);
-  // the cherry gets shoved aside; the peach ends up at/near the floor line
+  // the cherry gets shoved aside; the peach barely deflects (mass ∝ r²)
   assert.ok(Math.abs(small.x - 100) > 5, 'cherry pushed aside');
+  assert.ok(Math.abs(big.x - 106) < Math.abs(small.x - 100), 'peach moved less');
 });
 
 test('same-level contact is reported for the merge pass', () => {

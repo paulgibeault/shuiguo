@@ -19,19 +19,11 @@ test('every tracked JSON file parses', () => {
   }
 });
 
-test('every tracked JS file parses', async () => {
+test('every tracked JS file parses', () => {
   for (const f of files.filter((f) => /\.(js|mjs)$/.test(f))) {
-    const src = fs.readFileSync(path.join(ROOT, f), 'utf8');
-    // new Function only accepts scripts; modules get a syntax-only import check
-    if (/^\s*(import|export)\s/m.test(src)) {
-      await import(path.join(ROOT, f)).catch((e) => {
-        // browser-only modules fail on missing DOM at RUN time; a SyntaxError
-        // is the only failure this gate is about
-        if (e instanceof SyntaxError) throw e;
-      });
-    } else {
-      new Function(src);   // eslint-disable-line no-new-func
-    }
+    // syntax-only: node --check handles scripts and modules alike, and never
+    // executes (a DOM module would throw at run time, which isn't this gate)
+    execSync(`node --check ${JSON.stringify(path.join(ROOT, f))}`, { stdio: 'pipe' });
   }
 });
 
@@ -46,7 +38,7 @@ test("sw.js keeps the CI-rewritable version line and this game's id", () => {
   const sw = fs.readFileSync(path.join(ROOT, 'sw.js'), 'utf8');
   assert.match(sw, /^const APP_VERSION = '\d+\.\d+\.\d+';$/m, 'anchored, single-quoted APP_VERSION');
   assert.match(sw, /^const GAME_ID = 'shuiguo';/m);
-  assert.ok(!/skipWaiting\(\)/.test(sw.split('arcade:sw.skipWaiting')[0].split('install')[1] || ''), 'no skipWaiting on install');
+  assert.ok(sw.includes('arcade:sw.skipWaiting'), 'launcher-mediated activation handler present');
 });
 
 test('gameId is consistent across manifest, sw, and index.html', () => {
