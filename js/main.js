@@ -1,20 +1,30 @@
-// shuǐ guǒ tān boot + Arcade SDK wiring.
+// shuǐ guǒ tān boot + the FREE PLAY host.
 //
 // Boot contract (GAME_INTEGRATION.md §2): everything that reads state waits
 // on Arcade.ready. The render loop is Arcade.loop (fleet standard), timers
 // honor suspend, saves flush synchronously in onSuspend.
+//
+// This file used to be the whole game. It is now the boot path plus one of
+// three hosts: the campaign's farm and market live in js/farm-host.js and
+// js/market-host.js, and which screen is up is js/mode.js's business. Free play
+// itself is UNCHANGED — same save key, same score lane, same records, same
+// rules — and pinned that way by tests/free-play-isolation.
 
-import { FRUITS, MAX_LEVEL, PHYS, radiusOf } from './constants.js';
+import { FRUITS, MAX_LEVEL, PHYS } from './constants.js';
 import { makeGame, start, tick, serialize, restore, inDanger } from './game.js';
 import { makeRenderer } from './render.js';
 import { bindInput } from './input.js';
 import { makeEffects, pushEvent, pruneEffects, resetEffects } from './effects.js';
-import { paintFruit } from './fruit-art.js';
 import {
   readDiscovered, packDiscovered, newDiscoveries, deepestChain, isDiscoverable,
 } from './progress.js';
 import { sfx } from './sfx.js';
 import { makeRng } from './arcade-rng.js';
+import { paintChip } from './chips.js';
+import { makeRouter } from './mode.js';
+import { makeCampaignSave, bootScreen } from './campaign-save.js';
+import { makeFarmHost } from './farm-host.js';
+import { makeMarketHost } from './market-host.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -72,31 +82,6 @@ function drawNext() {
   paintChip(nextCanvas, g.next, 0.34);
 }
 
-// Draw one fruit, alone and centred, filling a small square canvas. Used by
-// the NEXT preview and by every chip in the menu's evolution chart — the SAME
-// painter the board uses, so a fruit is recognisably itself everywhere.
-//
-// `share` is the fruit's radius as a fraction of the canvas: it must leave
-// room for the accessories, which reach past r (see ART.maxExtent).
-function paintChip(el, level, share) {
-  const cctx = el.getContext('2d');
-  const dpr = Math.min(window.devicePixelRatio || 1, 2);
-  const size = el.clientWidth || 44;
-  const px = Math.round(size * dpr);
-  if (el.width !== px) { el.width = px; el.height = px; }
-  cctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  cctx.clearRect(0, 0, size, size);
-  cctx.save();
-  // Accessories grow upward, so drop the centre a little to keep a pineapple
-  // crown or a cherry stem inside the box.
-  cctx.translate(size / 2, size * 0.56);
-  const worldR = radiusOf(level);
-  const k = (size * share) / worldR;
-  cctx.scale(k, k);
-  paintFruit(cctx, level, worldR);
-  cctx.restore();
-}
-
 // ── discovery ──────────────────────────────────────────────────────────────
 // "First time I made a peach!" — the reward loop and the bilingual-learning
 // hook in one card. Discovery is merge-born only (js/progress.js explains
@@ -152,12 +137,22 @@ function queueDiscoveryCards(levels) {
   pumpCards();
 }
 
+// The campaign's first-make of a level is the same moment wearing a different
+// hat: you didn't just meet this fruit, you earned the right to grow it. Same
+// card, same queue, same dwell — one line of copy apart.
+export function queueSeedCards(levels) {
+  for (const level of levels) cardQueue.push({ level, kicker: 'New seed! 新种子!' });
+  pumpCards();
+}
+
 function pumpCards() {
   if (cardShowing || !cardQueue.length) return;
   showCard(cardQueue.shift());
 }
 
-function showCard(level) {
+function showCard(entry) {
+  const level = typeof entry === 'number' ? entry : entry.level;
+  const kicker = typeof entry === 'number' ? 'First one! 第一次!' : entry.kicker;
   const f = FRUITS[level - 1];
   const card = document.createElement('div');
   card.className = 'card';
@@ -172,7 +167,7 @@ function showCard(level) {
     '</div>';
   // textContent for every fruit string — the table is ours, but the habit is
   // the fleet's and costs nothing.
-  card.querySelector('.card-kicker').textContent = 'First one! 第一次!';
+  card.querySelector('.card-kicker').textContent = kicker;
   card.querySelector('.card-hanzi').textContent = f.hanzi;
   card.querySelector('.card-pinyin').textContent = f.pinyin;
   card.querySelector('.card-en').textContent = f.name;
@@ -234,17 +229,22 @@ function hideChainBanner() {
 }
 
 // ── screens ────────────────────────────────────────────────────────────────
-function show(screen) {
-  $('menu').hidden = screen !== 'menu';
-  $('over').hidden = screen !== 'over';
-  $('hud').hidden = screen === 'menu';
-  // The chart is a collection book now, so it is rebuilt every time the menu
-  // comes up rather than once at boot — the peach you just found is filled in
-  // by the time you look. It also has to be painted while the sheet is
-  // VISIBLE: a hidden sheet is display:none, and a chip canvas measured there
-  // has no CSS size to scale its backing store from.
-  if (screen === 'menu') buildChart();
-}
+// One router owns all seven; free play registers the three it drives. The
+// chart is rebuilt every time the free-play menu comes up rather than once at
+// boot — it is a collection book now, so the peach you just found is filled in
+// by the time you look. It also has to be painted while its sheet is VISIBLE:
+// a hidden sheet is display:none, and a chip canvas measured there has no CSS
+// size to scale its backing store from. The router settles the DOM before it
+// calls onEnter, which is what makes that safe.
+const router = makeRouter();
+
+router
+  .add('mode', { sheet: $('mode'), onEnter: paintModeBadge })
+  .add('menu', { sheet: $('menu'), onEnter: buildChart })
+  .add('game', { chrome: [$('hud')] })
+  .add('over', { sheet: $('over') });
+
+function show(screen) { router.route(screen); }
 
 function beginGame(resumed) {
   resetEffects(fx);
@@ -350,6 +350,7 @@ const FIXED = 1 / 60 / PHYS.substeps;
 let acc = 0;
 
 const loop = Arcade.loop((deltaMs) => {
+  if (!router.is('game')) return;
   const dt = Math.min(deltaMs / 1000, PHYS.maxDt);
   acc += dt;
   while (acc > 0) {
@@ -405,13 +406,23 @@ const loop = Arcade.loop((deltaMs) => {
 let saveTimer = null;
 
 // ── lifecycle ──────────────────────────────────────────────────────────────
+// Three hosts, one set of Arcade hooks. Each hook asks the router who is
+// driving and tells only them — a host that is not on screen must never write
+// a save or start a loop.
+
 Arcade.onSuspend(() => {
-  if (g.state === 'playing') flushSave();   // synchronous — lands in the grace window
+  if (router.is('game') && g.state === 'playing') flushSave();  // synchronous: the grace window
+  if (router.is('market')) market.flush();
+  campaignSave.flushIfDirty();
   loop.stop();
+  farmLoop.stop();
+  marketLoop.stop();
 });
+
 Arcade.onResume(() => {
-  if (g.state === 'playing') loop.start();
-  else loop.kick();
+  if (router.is('game')) { if (g.state === 'playing') loop.start(); else loop.kick(); }
+  else if (router.is('farm')) { farm.enter(); }
+  else if (router.is('market')) { marketLoop.start(); }
 });
 
 Arcade.onSettingsChange(() => {
@@ -421,17 +432,30 @@ Arcade.onSettingsChange(() => {
   // sheet is actually visible (a display:none canvas measures 0).
   if (!$('menu').hidden) buildChart();
   if (!$('over').hidden) fillSummary();
+  if (router.is('market')) market.refreshHud();
+  if (router.is('farm')) farm.refresh();
   applyResize();
-  loop.kick();
 });
 
 Arcade.onStateReplaced(() => {
-  // Treat like a fresh boot: recompute everything from storage.
+  // Treat like a fresh boot: recompute everything from storage, both modes.
   loop.stop();
+  farmLoop.stop();
+  marketLoop.stop();
+  campaignSave.reload();
   bootFromState();
 });
 
-function applyResize() { R.resize(); if (g.state === 'playing') loop.kick(); else drawIdle(); }
+// One canvas, three views. Whoever is driving owns the transform, so a resize
+// has to reach all of them and then repaint the one on screen.
+function applyResize() {
+  R.resize();
+  farm.resize();
+  market.resize();
+  if (router.is('game')) { if (g.state === 'playing') loop.kick(); else drawIdle(); }
+  else if (router.is('farm')) farmLoop.kick();
+  else if (router.is('market')) marketLoop.kick();
+}
 window.addEventListener('resize', applyResize);
 
 function drawIdle() { R.draw(g, settings, performance.now(), fx); }
@@ -474,33 +498,105 @@ function buildChart() {
   });
 }
 
-// ── boot ───────────────────────────────────────────────────────────────────
-function bootFromState() {
-  resetEffects(fx);
-  clearCards();
-  hideChainBanner();
-  const rec = Arcade.records.get('high-score');
-  best = rec && typeof rec.value === 'number' ? rec.value : 0;
-  loadDiscovered();
+// ── the campaign ───────────────────────────────────────────────────────────
+// Two more hosts on the same canvas and the same frame. Free play above this
+// line is untouched; everything below is additive.
 
-  const save = Arcade.state.get(SAVE_KEY);
-  if (save && restore(g, save)) {
-    bankBoardAsDiscovered();
-    runStartedAt = null;             // a resumed run doesn't compete for time
-    firstWatermelonAt = null;
-    wasInDanger = inDanger(g);       // already over the line ⇒ already creaked
-    show('game');
-    refreshHud();
-    loop.start();
-  } else {
-    g.state = 'menu';
-    show('menu');
-    applyResize();
-  }
+const campaignSave = makeCampaignSave(Arcade.state);
+const wallNow = () => Date.now();
+
+const farmLoop = Arcade.loop(() => {
+  if (!router.is('farm')) return;
+  farm.draw(performance.now());
+});
+
+const marketLoop = Arcade.loop((deltaMs) => {
+  if (!router.is('market')) return;
+  market.frame(deltaMs);
+});
+
+const farm = makeFarmHost({
+  canvas,
+  save: campaignSave,
+  getSettings: () => settings,
+  wallNow,
+  loop: farmLoop,
+  rng,
+});
+
+const market = makeMarketHost({
+  canvas,
+  router,
+  save: campaignSave,
+  getSettings: () => settings,
+  rng,
+  loop: marketLoop,
+  session: Arcade.session,
+});
+
+// The campaign borrows free play's two celebrations wholesale: a chain is a
+// chain, and a first-make is a card. Only the kicker differs.
+market.setHooks({
+  onChain: showChainBanner,
+  onUnlock: (levels) => { queueSeedCards(levels); commitDiscovered(levels); },
+});
+
+router
+  .add('farm', { chrome: [$('farm-hud')], onEnter: farm.enter, onExit: farm.exit })
+  .add('market', { chrome: [$('market-hud')], onEnter: market.enter, onExit: market.exit })
+  .add('appraisal', { sheet: $('appraisal') });
+
+// 🌱 on the Campaign button until the player owns a farm — the one nudge in the
+// game, and it retires the moment it has been acted on.
+function paintModeBadge() {
+  const c = campaignSave.get();
+  $('campaign-badge').hidden = c.phase === 'open';
 }
 
-bindInput(canvas, g, R.toWorldX, () => { /* per-drop hooks live in the event drain */ });
+// Going to market. The gift run and every run after it take the same path;
+// what differs is only what is in the crate.
+function toMarket() {
+  clearCards();
+  hideChainBanner();
+  if (!market.begin()) return;
+  router.route('market');
+}
 
+function toCampaign() {
+  clearCards();
+  hideChainBanner();
+  const c = campaignSave.get();
+  // The opening, in one branch: no farm yet means there is only one thing to
+  // do, so the game does it rather than offering it.
+  if (c.phase === 'gift-run') { toMarket(); return; }
+  if (c.phase === 'buy-farm') { router.route('farm'); return; }
+  router.route('farm');
+}
+
+$('play-campaign').addEventListener('click', () => { sfx('menu-click'); toCampaign(); });
+$('play-free').addEventListener('click', () => { sfx('menu-click'); router.route('menu'); });
+$('menu-to-mode').addEventListener('click', () => { sfx('menu-click'); router.route('mode'); });
+$('farm-to-menu').addEventListener('click', () => { sfx('menu-click'); router.route('mode'); });
+$('to-market').addEventListener('click', () => { sfx('menu-click'); toMarket(); });
+$('pack-up').addEventListener('click', () => { sfx('menu-click'); market.finishRun('packed'); });
+$('appraisal-done').addEventListener('click', () => {
+  sfx('menu-click');
+  const c = campaignSave.get();
+  // After the gift run the farm is for sale, and buying it is the only move —
+  // so the appraisal hands the player straight to it (js/farm-host.js stages
+  // the 出售 sign) rather than asking them to find it.
+  router.route(c.phase === 'gift-run' ? 'mode' : 'farm');
+});
+
+// ── input ──────────────────────────────────────────────────────────────────
+// One binding for a canvas two games share. The adapter answers "who is being
+// driven right now", which is null on every screen that is not a board.
+bindInput(canvas, {
+  game: () => (router.is('game') ? g : router.is('market') ? market.game() : null),
+  toWorldX: (px) => R.toWorldX(px),
+});
+
+// ── free play's own buttons ────────────────────────────────────────────────
 $('play').addEventListener('click', () => { sfx('menu-click'); beginGame(false); });
 $('again').addEventListener('click', () => { sfx('menu-click'); beginGame(false); });
 $('to-menu').addEventListener('click', () => {
@@ -509,6 +605,46 @@ $('to-menu').addEventListener('click', () => {
   show('menu');
   drawIdle();
 });
+
+// ── boot ───────────────────────────────────────────────────────────────────
+// Resume rules (js/campaign-save.js §bootScreen): a mid-drop board wins over
+// everything, campaign before free play because it is the more specific state,
+// and otherwise the front door. A campaign in progress does NOT open the farm
+// on launch — the farm is a place you choose to go.
+function bootFromState() {
+  resetEffects(fx);
+  clearCards();
+  hideChainBanner();
+  const rec = Arcade.records.get('high-score');
+  best = rec && typeof rec.value === 'number' ? rec.value : 0;
+  loadDiscovered();
+
+  const where = bootScreen({
+    marketSave: campaignSave.readMarket(),
+    freePlaySave: Arcade.state.get(SAVE_KEY),
+  });
+
+  if (where === 'market' && market.resume()) {
+    router.route('market');
+    return;
+  }
+
+  const save = Arcade.state.get(SAVE_KEY);
+  if (where !== 'mode' && save && restore(g, save)) {
+    bankBoardAsDiscovered();
+    runStartedAt = null;             // a resumed run doesn't compete for time
+    firstWatermelonAt = null;
+    wasInDanger = inDanger(g);       // already over the line ⇒ already creaked
+    show('game');
+    refreshHud();
+    loop.start();
+    return;
+  }
+
+  g.state = 'menu';
+  show('mode');
+  applyResize();
+}
 
 await Arcade.ready;
 pullSettings();

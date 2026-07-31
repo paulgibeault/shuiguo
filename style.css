@@ -333,3 +333,180 @@ button.big {
 [data-theme="dark"] .chip.locked .chip-art { filter: grayscale(1) contrast(0) brightness(1.7); opacity: 0.3; }
 .chip.locked figcaption { opacity: 0.5; letter-spacing: 0.05em; }
 .arrow { font-size: 0.7rem; opacity: 0.5; align-self: center; margin-bottom: 0.6rem; }
+
+/* ── the campaign ─────────────────────────────────────────────────────────
+ * Everything below belongs to the farm and the market run. Free play's rules
+ * above are untouched; these are additive, and every one of them is scoped to
+ * an id or a class that only the campaign's markup carries. */
+
+/* The campaign HUDs sit in the same slot as free play's, and the router shows
+ * exactly one of the three. */
+.campaign-hud {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem 0.25rem;
+}
+.campaign-hud[hidden] { display: none; }
+.campaign-hud button { padding: 0.4rem 0.9rem; font-size: 0.85rem; white-space: nowrap; }
+.campaign-hud button.icon { padding: 0.4rem 0.7rem; }
+.campaign-hud .stat { min-width: 3.5rem; }
+
+/* The Market button carries the crate count and lights up once there is
+ * something in it. Disabled rather than hidden — an empty crate is a reason to
+ * go and farm, and hiding the button would hide the reason. */
+#to-market .pill {
+  display: inline-block;
+  min-width: 1.4rem;
+  padding: 0 0.35rem;
+  margin-left: 0.25rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--ink) 12%, transparent);
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+#to-market.ready {
+  background: var(--accent);
+  color: #fff;
+  border-color: color-mix(in srgb, var(--accent) 70%, black);
+}
+#to-market.ready .pill { background: rgba(255, 255, 255, 0.28); }
+#to-market:disabled { opacity: 0.5; cursor: default; }
+
+/* 🌱 — the one nudge in the game, and it retires the moment it is acted on. */
+.badge { font-size: 0.9em; }
+
+/* What is left to sell. The crate emptying IS the run's clock, so it wants to
+ * be readable at a glance and to take no room at all. Scrolls rather than
+ * wrapping: a crate of nine kinds must not push the board off the screen. */
+.crate-strip {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.crate-strip::-webkit-scrollbar { display: none; }
+.crate-chip { display: flex; flex-direction: column; align-items: center; margin: 0; flex: none; }
+.crate-chip .chip-art { width: 1.6rem; height: 1.6rem; }
+.crate-chip figcaption { font-size: 0.55rem; opacity: 0.75; font-variant-numeric: tabular-nums; }
+
+/* ── bottom sheets (shop, plot, terrace) ──────────────────────────────────
+ * Drawers over a canvas that keeps drawing, in the same spirit as the
+ * discovery cards: the farm is never paused, it is only covered. */
+.sheet.bottom {
+  top: auto;
+  bottom: 0;
+  justify-content: flex-end;
+  gap: 0.6rem;
+  padding: 1.1rem 1rem calc(1.1rem + env(safe-area-inset-bottom));
+  border-radius: 1.2rem 1.2rem 0 0;
+  background: color-mix(in srgb, var(--paper) 96%, transparent);
+  box-shadow: 0 -6px 24px var(--shadow);
+  max-height: 78%;
+  overflow-y: auto;
+}
+.sheet.bottom h2 { font-size: 1.3rem; }
+.shop-head {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  opacity: 0.6;
+  font-weight: 700;
+}
+.shop-cash { font-size: 0.95rem; opacity: 0.85; }
+.shop-cash strong { font-size: 1.3rem; color: var(--accent); }
+
+.shop-grid {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.45rem;
+  max-width: 26rem;
+}
+/* A seed card is the real fruit at its best, its price, and how many are
+ * already in the drawer. Unaffordable cards are greyed, never removed: seeing
+ * what you cannot afford yet is most of the reason to go and earn it. */
+.seed-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.05rem;
+  margin: 0;
+  padding: 0.4rem 0.5rem 0.35rem;
+  border-radius: 0.7rem;
+  border: 2px solid var(--wood-edge);
+  background: var(--card);
+  box-shadow: 0 2px 0 var(--shadow);
+  min-width: 4rem;
+}
+.seed-card .chip-art { width: 2.4rem; height: 2.4rem; }
+.seed-hanzi { font-size: 0.8rem; line-height: 1.1; }
+.seed-price { font-size: 0.7rem; font-weight: 700; color: var(--accent); font-variant-numeric: tabular-nums; }
+.seed-held { font-size: 0.6rem; opacity: 0.7; min-height: 0.75rem; font-variant-numeric: tabular-nums; }
+.seed-card figcaption { font-size: 0.65rem; opacity: 0.75; font-variant-numeric: tabular-nums; }
+.seed-card.off { opacity: 0.42; cursor: default; box-shadow: none; }
+
+.shop-rows { display: flex; flex-direction: column; gap: 0.35rem; width: 100%; max-width: 26rem; }
+.shop-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-areas: "name price" "note price";
+  align-items: center;
+  gap: 0 0.8rem;
+  text-align: left;
+  border-radius: 0.7rem;
+  padding: 0.5rem 0.9rem;
+  border-width: 2px;
+}
+.row-name { grid-area: name; font-size: 0.95rem; }
+.row-note { grid-area: note; font-size: 0.68rem; opacity: 0.65; }
+.row-price {
+  grid-area: price;
+  font-weight: 700;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.shop-row.off { opacity: 0.45; cursor: default; box-shadow: none; }
+
+/* ── the appraisal ────────────────────────────────────────────────────────
+ * The day's takings, itemized, landing one line at a time. The launcher's base
+ * stylesheet collapses every animation to one instant frame under reduced
+ * motion, so the whole ledger simply appears — which is right, because it is
+ * information, and the host skips the count-up in that case too. */
+.ledger {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin: 0;
+  min-width: 15rem;
+  max-width: 22rem;
+  width: 100%;
+}
+.ledger div {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 1rem;
+  padding: 0.35rem 0.9rem;
+  border-radius: 0.6rem;
+  background: var(--card);
+  box-shadow: 0 2px 8px var(--shadow);
+}
+.ledger dt { font-size: 0.9rem; }
+.ledger dd { margin: 0; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--accent); }
+.ledger div.landing { animation: line-in 0.34s cubic-bezier(0.2, 1.4, 0.5, 1) backwards; }
+
+@keyframes line-in {
+  0% { transform: translateY(-0.6rem) scale(0.94); opacity: 0; }
+  100% { transform: none; opacity: 1; }
+}
+
+/* Seeds that turned up in the till — the run's drip, batched into one line so
+ * it reads as a find rather than as a dribble. */
+.found-seeds { display: flex; flex-direction: column; align-items: center; gap: 0.3rem; }
+.found-seeds[hidden] { display: none; }

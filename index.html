@@ -32,6 +32,29 @@
       <div class="stat"><span class="label">Best</span><span id="best" class="value">0</span></div>
     </header>
 
+    <!-- The campaign's two HUDs. Same slot in the frame as free play's, and
+         the router shows exactly one of the three. -->
+    <header id="farm-hud" class="campaign-hud" hidden>
+      <div class="stat"><span class="label">元</span><span id="farm-cash" class="value">0</span></div>
+      <button id="to-shop" type="button">Shop 商店</button>
+      <button id="to-market" class="go" type="button">
+        Market 市场 <span id="crate-count" class="pill">0</span>
+      </button>
+      <button id="farm-to-menu" class="icon" type="button" aria-label="Menu">☰</button>
+    </header>
+
+    <header id="market-hud" class="campaign-hud" hidden>
+      <div class="stat"><span class="label">Score</span><span id="m-score" class="value">0</span></div>
+      <div class="next-box" aria-label="Next fruit">
+        <span class="label">Next</span>
+        <canvas id="m-next" width="48" height="48"></canvas>
+        <span id="m-next-label" class="next-name"></span>
+      </div>
+      <!-- what is left in the crate, as chips: the run's whole clock -->
+      <div id="crate-strip" class="crate-strip" aria-label="Fruit left in the crate"></div>
+      <button id="pack-up" type="button">Pack up 收摊</button>
+    </header>
+
     <!-- The board and everything that floats over it WITHOUT pausing it: the
          chain banner and the discovery cards. Both are inert to pointers
          except the card itself (tap to dismiss), so play never stops. The
@@ -42,11 +65,23 @@
       <div id="cards" class="cards" aria-live="polite"></div>
     </div>
 
-    <section id="menu" class="sheet">
+    <!-- The front door. Two ways to play the same fruit: the endless stall,
+         and the stall with a farm behind it. -->
+    <section id="mode" class="sheet">
+      <h1 class="sign"><span class="sign-hanzi">水果摊</span><span class="sign-name">shuǐ guǒ tān</span></h1>
+      <button id="play-campaign" class="big" type="button">
+        Campaign 经营 <span id="campaign-badge" class="badge" hidden>🌱</span>
+      </button>
+      <button id="play-free" type="button">Free play 自由</button>
+      <p class="hint">Campaign: grow the fruit you drop, on a terraced farm in the mountains. Free play: the endless stall.</p>
+    </section>
+
+    <section id="menu" class="sheet" hidden>
       <h1 class="sign"><span class="sign-hanzi">水果摊</span><span class="sign-name">shuǐ guǒ tān</span></h1>
       <p class="tagline">Drop fruit. Match pairs. Grow the watermelon 西瓜.</p>
       <div id="chart" class="chart" aria-label="Fruit evolution chain"></div>
       <button id="play" class="big" type="button">Play 玩</button>
+      <button id="menu-to-mode" type="button">Back</button>
       <p class="hint">Slide to aim · release to drop · two of a kind merge into the next fruit · don't cross the line</p>
     </section>
 
@@ -72,6 +107,41 @@
 
       <button id="again" class="big" type="button">Again 再来</button>
       <button id="to-menu" type="button">Menu</button>
+    </section>
+
+    <!-- ── the campaign's sheets ────────────────────────────────────────────
+         Three bottom sheets over the farm (the shop, one plot, the terrace for
+         sale) and one full sheet for the appraisal. The farm host owns the
+         three; only the appraisal is a router screen, because it is a place
+         the game goes rather than a drawer the player opens. -->
+
+    <section id="shop" class="sheet bottom" hidden>
+      <h2>Shop 商店</h2>
+      <p class="shop-cash">元 <strong id="shop-cash">0</strong></p>
+      <h3 class="shop-head">Seeds 种子</h3>
+      <div id="shop-seeds" class="shop-grid"></div>
+      <h3 class="shop-head">The farm 农场</h3>
+      <div id="shop-kit" class="shop-rows"></div>
+      <button id="shop-close" type="button">Done</button>
+    </section>
+
+    <section id="plot" class="sheet bottom" hidden>
+      <h2 id="plot-title">Plot</h2>
+      <p id="plot-note" class="hint"></p>
+      <div id="plot-seeds" class="shop-grid"></div>
+      <div id="plot-rows" class="shop-rows"></div>
+      <button id="plot-close" type="button">Done</button>
+    </section>
+
+    <section id="appraisal" class="sheet" hidden>
+      <h2>The day's take 今天的收入</h2>
+      <dl id="appraisal-lines" class="ledger"></dl>
+      <p class="final">元 <strong id="appraisal-total">0</strong></p>
+      <div id="appraisal-seeds" class="found-seeds" hidden>
+        <span class="label">Found in the till 种子</span>
+        <div id="appraisal-seed-chips" class="shop-grid"></div>
+      </div>
+      <button id="appraisal-done" class="big" type="button">To the farm 回农场</button>
     </section>
   </div>
 

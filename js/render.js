@@ -22,6 +22,10 @@ import {
 
 const EMPTY_FX = { droplets: [], floats: [], pops: new Map(), squashes: new Map() };
 
+// A held fruit whose radius reaches the dropper's own height would be drawn
+// crossing the deadline before it was dropped. See drawHeld().
+const CRATED_R = WORLD.dropperY;
+
 // The pile shivers over the last second before the line claims it.
 const TREMBLE_MS = 1000;
 const TREMBLE_MAX = 1;          // world units — deliberately barely-there
@@ -70,7 +74,7 @@ export function makeRenderer(canvas) {
     paintLeaf(ctx, th, tMs, motion);
 
     drawDeadline(g, th, tMs, motion);
-    if (g.state === 'playing') drawGhost(g, th);
+    if (g.state === 'playing' && g.current != null) drawGhost(g, th);
 
     // the pile — trembles as a whole once the line is about to claim it
     const overMs = worstOverMs(g, tMs);
@@ -90,22 +94,20 @@ export function makeRenderer(canvas) {
     drawDroplets(fx, tMs);
     drawFloats(fx, tMs, th, settings);
 
-    // dropper: held fruit + aim guide
-    if (g.state === 'playing') {
+    // dropper: held fruit + aim guide. `current` is null in a campaign run
+    // whose crate has run out — the dropper simply isn't there any more.
+    if (g.state === 'playing' && g.current != null) {
       const r = radiusOf(g.current);
       ctx.strokeStyle = th.guide;
       ctx.lineWidth = 2;
       ctx.setLineDash([4, 8]);
       ctx.beginPath();
-      ctx.moveTo(g.dropX, WORLD.dropperY + r);
+      ctx.moveTo(g.dropX, WORLD.dropperY + Math.min(r, CRATED_R));
       ctx.lineTo(g.dropX, WORLD.floorY);
       ctx.stroke();
       ctx.setLineDash([]);
       ctx.globalAlpha = heldAlpha(g, tMs);
-      ctx.save();
-      ctx.translate(g.dropX, WORLD.dropperY);
-      paintFruit(ctx, g.current, r);
-      ctx.restore();
+      drawHeld(th, g.current, r, g.dropX);
       ctx.globalAlpha = 1;
     }
 
@@ -130,6 +132,37 @@ export function makeRenderer(canvas) {
       angle: motion ? b.angle : 0,
       expression: expressionFor(b, tMs, !motion),
     });
+    ctx.restore();
+  }
+
+  // The held fruit, at the size the dropper zone can actually hold it.
+  //
+  // A watermelon is 90 world units across and the dropper hangs 52 above the
+  // floor of the danger zone, so anything from a pear up would be drawn ACROSS
+  // the deadline while merely being held — the board would look lost before the
+  // player had done anything. Big fruit are therefore drawn CRATED: scaled to
+  // fit, over a true-size dashed ring so the player can still read how much
+  // board the thing is about to take. Physics spawns it at its real size.
+  //
+  // Free play can never reach this: MAX_SPAWN_LEVEL is 5, whose radius is 39.
+  // Only a campaign crate carries fruit this big to a stall.
+  function drawHeld(th, level, r, x) {
+    const crated = r >= CRATED_R;
+    if (crated) {
+      ctx.save();
+      ctx.strokeStyle = th.ghost;
+      ctx.setLineDash([4, 6]);
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(x, WORLD.dropperY, r, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.restore();
+    }
+    ctx.save();
+    ctx.translate(x, WORLD.dropperY);
+    if (crated) ctx.scale(CRATED_R / r, CRATED_R / r);
+    paintFruit(ctx, level, r);
     ctx.restore();
   }
 

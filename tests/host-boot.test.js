@@ -1,0 +1,319 @@
+// Booting the actual game, wiring and all.
+//
+// Everything else in this suite tests a pure module. This one boots js/main.js
+// against tests/fake-dom.js and drives it through the campaign the way a player
+// would, because the bugs the host layer really has are wiring bugs — a typo'd
+// element id, a const used before it exists, a save written to the wrong key, a
+// host still drawing after it left the screen — and every one of them shows up
+// the moment the thing is actually run.
+//
+// The isolation promise is pinned here too, and it is the strongest claim the
+// campaign makes: playing free play must not write a campaign key, and playing
+// the campaign must not write a free-play one.
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { bootGame } from './fake-dom.js';
+import { TUNING, RULES } from '../js/constants.js';
+import { FREE_PLAY_KEYS, CAMPAIGN_KEYS, CAMPAIGN_KEY, MARKET_KEY } from '../js/campaign-save.js';
+import { makeCampaign, finishFirstRun, buyFarm, harvestInto, serialize as packCampaign } from '../js/campaign.js';
+
+// One drop, cooldown and all. js/game.js locks input for RULES.dropCooldownMs
+// of REAL time (it runs on performance.now()), so a test that only spins the
+// loop gets exactly one fruit however many frames it asks for.
+async function dropAt(booted, x) {
+  booted.$('board').fire('pointerdown', { clientX: x, clientY: 300 });
+  booted.$('board').fire('pointerup', { clientX: x, clientY: 300 });
+  booted.arcade.tick(20);
+  await new Promise((r) => setTimeout(r, RULES.dropCooldownMs + 60));
+  booted.arcade.tick(20);
+}
+
+// Which sheet is up, by the ids the router owns.
+function screen($) {
+  for (const id of ['mode', 'menu', 'over', 'appraisal']) if (!$(id).hidden) return id;
+  if (!$('farm-hud').hidden) return 'farm';
+  if (!$('market-hud').hidden) return 'market';
+  if (!$('hud').hidden) return 'game';
+  return '(none)';
+}
+
+// ── it boots at all ────────────────────────────────────────────────────────
+
+test('a fresh player lands on the front door with both ways in', async () => {
+  const { $, arcade } = await bootGame();
+  assert.equal(screen($), 'mode');
+  assert.equal($('campaign-badge').hidden, false, 'the new-shoot badge is missing on a fresh save');
+  assert.ok(arcade.stats.get('session').launches >= 1, 'the boot never proved the storage bridge');
+});
+
+test('every id the hosts reach for is one index.html actually declares', async () => {
+  // fake-dom throws on an undeclared id, so simply walking every screen and
+  // opening every sheet is the assertion.
+  const { $, arcade } = await bootGame();
+  $('play-free').fire('click');
+  assert.equal(screen($), 'menu');
+  $('menu-to-mode').fire('click');
+  $('play-campaign').fire('click');           // gift run
+  assert.equal(screen($), 'market');
+  arcade.tick(2);
+  $('pack-up').fire('click');
+  arcade.tick(1);
+  assert.equal(screen($), 'appraisal');
+  $('appraisal-done').fire('click');
+  assert.equal(screen($), 'farm');
+  $('to-shop').fire('click');
+  $('shop-close').fire('click');
+  $('farm-to-menu').fire('click');
+  assert.equal(screen($), 'mode');
+});
+
+// ── free play is untouched ─────────────────────────────────────────────────
+
+test('free play still resumes into its own board, exactly as it did', async () => {
+  const board = { v: 1, score: 40, current: 3, next: 2, fruits: [[2, 100, 400]], rngState: 7 };
+  const { $, arcade } = await bootGame({ state: { save: board } });
+  assert.equal(screen($), 'game', 'a mid-game free-play save no longer resumes');
+  assert.equal($('score').textContent, '40');
+  assert.ok(arcade.loops.some((l) => l.running), 'the board resumed without a loop');
+});
+
+test('a mid-drop campaign run outranks everything and resumes into the market', async () => {
+  const c = makeCampaign();
+  const board = { v: 1, score: 12, current: 11, next: null, fruits: [[9, 100, 400]], rngState: 3 };
+  const { $ } = await bootGame({
+    state: {
+      [CAMPAIGN_KEY]: packCampaign(c),
+      [MARKET_KEY]: { v: 1, board, tally: { unlockedThisRun: [3], dripEligible: { 3: 4 } } },
+      save: { v: 1, score: 5, current: 1, next: 1, fruits: [], rngState: 1 },
+    },
+  });
+  assert.equal(screen($), 'market', 'someone mid-drop was sent somewhere else');
+  assert.equal($('m-score').textContent, '12');
+});
+
+test('playing free play writes free play keys and NOT ONE campaign key', async () => {
+  const { $, arcade } = await bootGame();
+  $('play-free').fire('click');
+  $('play').fire('click');
+  arcade.tick(3);
+  $('board').fire('pointerdown', { clientX: 120, clientY: 300 });
+  $('board').fire('pointerup', { clientX: 120, clientY: 300 });
+  arcade.tick(90);
+  arcade.runTimers();
+  arcade.fire('suspend');
+
+  assert.ok(arcade.writes.includes('save'), 'free play stopped saving its board');
+  for (const key of CAMPAIGN_KEYS) {
+    assert.ok(!arcade.writes.includes(key), `free play wrote the campaign's ${key}`);
+  }
+  assert.ok(!arcade.scores.lanes.some((s) => s.lane === 'campaign'), 'free play scored in the campaign lane');
+});
+
+test('playing the campaign writes campaign keys and NOT ONE free-play key', async () => {
+  const { $, arcade } = await bootGame();
+  const booted = { $, arcade };
+  $('play-campaign').fire('click');
+  arcade.tick(3);
+  await dropAt(booted, 120);
+  arcade.runTimers();
+  $('pack-up').fire('click');
+  arcade.tick(1);
+
+  assert.ok(arcade.writes.includes(CAMPAIGN_KEY), 'the campaign never banked its own state');
+  for (const key of FREE_PLAY_KEYS) {
+    assert.ok(!arcade.writes.includes(key), `the campaign wrote free play's ${key}`);
+  }
+  assert.ok(!arcade.scores.lanes.some((s) => s.lane === 'classic'), 'a market day landed on the arcade board');
+});
+
+test('the two modes claim no key in common', () => {
+  for (const key of CAMPAIGN_KEYS) assert.ok(!FREE_PLAY_KEYS.includes(key), `${key} is claimed twice`);
+});
+
+// ── the opening ────────────────────────────────────────────────────────────
+
+test('the gift run goes straight to the stall, with a crate and no farm', async () => {
+  const { $, arcade } = await bootGame();
+  $('play-campaign').fire('click');
+  assert.equal(screen($), 'market', 'the first campaign tap asked the player to choose something');
+  assert.ok($('crate-strip').children.length > 0, 'the gift crate never reached the HUD');
+  arcade.tick(1);
+  assert.ok($('board').drawCalls.length > 0, 'the board never drew');
+});
+
+test('the first appraisal is floored, and the farm is for sale on the way out', async () => {
+  const { $, arcade } = await bootGame({ settings: { reducedMotion: true } });
+  $('play-campaign').fire('click');
+  arcade.tick(2);
+  $('pack-up').fire('click');
+  arcade.tick(1);
+
+  assert.equal(screen($), 'appraisal');
+  assert.ok($('appraisal-lines').children.length >= 1, 'the appraisal itemized nothing');
+  assert.equal(Number($('appraisal-total').textContent), TUNING.firstRunFloor,
+    'the gift run was not floored to the price of the farm');
+
+  $('appraisal-done').fire('click');
+  assert.equal(screen($), 'farm');
+  assert.equal(Number($('farm-cash').textContent), TUNING.firstRunFloor);
+});
+
+test('tapping the 出售 sign buys the farm, and the farm arrives planted', async () => {
+  const c = makeCampaign();
+  finishFirstRun(c, TUNING.firstRunFloor);
+  const { $, arcade } = await bootGame({ state: { [CAMPAIGN_KEY]: packCampaign(c) } });
+  $('play-campaign').fire('click');
+  assert.equal(screen($), 'farm');
+  arcade.tick(1);
+
+  // the sign hangs over the bottom terrace; tap it, then take the offer
+  $('board').fire('pointerup', { clientX: 180, clientY: 505 });
+  assert.equal($('plot').hidden, false, 'the for-sale sheet never opened');
+  const buy = $('plot-rows').children[0];
+  assert.equal(buy.disabled, false, 'the floored first run could not afford the farm it was floored for');
+  buy.fire('click');
+
+  assert.equal($('plot').hidden, true);
+  assert.equal(Number($('farm-cash').textContent), TUNING.firstRunFloor - TUNING.starterFarmCost);
+  const saved = arcade.state.get(CAMPAIGN_KEY);
+  assert.ok(saved.farm, 'buying the farm did not survive to the save');
+  assert.equal(saved.phase, 'open');
+});
+
+// ── the farm ───────────────────────────────────────────────────────────────
+
+// A player who has been through the opening: gift run played out (so the gift
+// crate is gone, the way a real run empties it), farm bought, money in the till.
+async function farmedGame(cash = TUNING.firstRunFloor * 2) {
+  const c = makeCampaign();
+  finishFirstRun(c, cash);
+  buyFarm(c, Date.now());
+  c.crate = Object.create(null);
+  const booted = await bootGame({ state: { [CAMPAIGN_KEY]: packCampaign(c) } });
+  booted.$('play-campaign').fire('click');
+  return booted;
+}
+
+test('the farm draws the mountainside, and an empty crate cannot go to market', async () => {
+  const { $, arcade } = await farmedGame();
+  assert.equal(screen($), 'farm');
+  arcade.tick(1);
+  assert.ok($('board').drawCalls.length > 50, 'the mountainside barely drew anything');
+  assert.equal($('crate-count').textContent, '0');
+  assert.equal($('to-market').disabled, true, 'an empty crate could be carried to market');
+});
+
+test('a crate with something in it lights the Market button up', async () => {
+  const c = makeCampaign();
+  finishFirstRun(c, TUNING.firstRunFloor * 2);
+  buyFarm(c, Date.now());
+  c.crate = Object.create(null);
+  harvestInto(c, { level: 1, count: 12 });
+  const { $ } = await bootGame({ state: { [CAMPAIGN_KEY]: packCampaign(c) } });
+  $('play-campaign').fire('click');
+  assert.equal($('crate-count').textContent, '12');
+  assert.equal($('to-market').disabled, false);
+  assert.ok($('to-market').classList.contains('ready'), 'the Market button never lit up');
+});
+
+test('the shop sells what the player has unlocked, and greys what they cannot afford', async () => {
+  const { $ } = await farmedGame();
+  $('to-shop').fire('click');
+  assert.equal($('shop').hidden, false);
+  const cards = [...$('shop-seeds').children];
+  assert.equal(cards.length, 1, 'the shop offered a seed the player has not unlocked');
+  assert.equal(cards[0].disabled, false, 'a rich player could not buy a cherry sapling');
+
+  // and equipment is offered, priced, and greyed when out of reach
+  const rows = [...$('shop-kit').children];
+  assert.ok(rows.length >= 2, 'the shop sells no equipment at all');
+  assert.ok(rows.some((r) => r.disabled), 'stream irrigation was affordable on day one');
+});
+
+test('tapping a bare bed opens the picker; tapping a thirsty plant waters it outright', async () => {
+  const { $, arcade } = await farmedGame();
+  arcade.tick(1);
+
+  // the starter cherry is in the bench of the bottom terrace, and it is thirsty
+  const before = arcade.state.get('campaign');
+  $('board').fire('pointerup', { clientX: 44, clientY: 536 });
+  assert.equal($('plot').hidden, true, 'watering asked a question instead of just watering');
+  arcade.fire('suspend');
+  const after = arcade.state.get('campaign');
+  assert.ok(after.farm.terraces[0].plots[0].wateredUntilMs > 0, 'the tap did not water the tree');
+  assert.notEqual(before, after);
+});
+
+// ── suspend, resume, and the settings ──────────────────────────────────────
+
+test('suspending anywhere loses nothing and stops every loop', async () => {
+  const { $, arcade } = await farmedGame();
+  arcade.tick(1);
+  arcade.fire('suspend');
+  assert.ok(!arcade.loops.some((l) => l.running), 'a loop kept running through a suspend');
+  // nothing happened, so nothing was written — a quiet screen is not a save
+  assert.ok(!arcade.writes.includes(CAMPAIGN_KEY), 'an idle farm wrote a save for no reason');
+
+  $('board').fire('pointerup', { clientX: 44, clientY: 536 });   // water the tree
+  arcade.fire('suspend');
+  assert.ok(arcade.writes.includes(CAMPAIGN_KEY), 'a watered plot did not survive a suspend');
+
+  arcade.fire('resume');
+  assert.equal(screen($), 'farm', 'resuming moved the player');
+});
+
+test('a settings change repaints whatever is on screen, on every screen', async () => {
+  const { $, arcade } = await bootGame();
+  for (const go of [
+    () => { $('play-free').fire('click'); },
+    () => { $('menu-to-mode').fire('click'); $('play-campaign').fire('click'); },
+  ]) {
+    go();
+    arcade.fire('settings');            // must not throw on any screen
+  }
+  assert.equal(screen($), 'market');
+});
+
+test('a replaced state re-boots both modes from storage rather than half of one', async () => {
+  const { $, arcade } = await bootGame();
+  $('play-free').fire('click');
+  $('play').fire('click');
+  assert.equal(screen($), 'game');
+
+  arcade.state.store.save = undefined;
+  delete arcade.state.store.save;
+  arcade.fire('replaced');
+  assert.equal(screen($), 'mode', 'a wiped state left the player on a board that no longer exists');
+});
+
+// ── the run ends every way it can ──────────────────────────────────────────
+
+test('every ending reaches the appraisal, and only the tidy ones pay the bonus', async () => {
+  const tidy = await bootGame();
+  tidy.$('play-campaign').fire('click');
+  tidy.arcade.tick(2);
+  // sell something, or there is no subtotal for the bonus to be a fraction of
+  for (const x of [80, 150, 220, 290]) await dropAt(tidy, x);
+  tidy.$('pack-up').fire('click');
+  tidy.arcade.tick(1);
+  const labels = [...tidy.$('appraisal-lines').children].map((r) => r.textContent);
+  assert.ok(labels.some((l) => l.includes('Tidy')), 'packing up earned no Tidy Stall');
+  assert.equal(tidy.arcade.state.get(MARKET_KEY), undefined, 'the finished run left a resumable board behind');
+});
+
+test('a market day banks its own stats and its own score lane', async () => {
+  const { $, arcade } = await bootGame();
+  $('play-campaign').fire('click');
+  arcade.tick(2);
+  $('board').fire('pointerdown', { clientX: 180, clientY: 300 });
+  $('board').fire('pointerup', { clientX: 180, clientY: 300 });
+  arcade.tick(60);
+  $('pack-up').fire('click');
+  arcade.tick(1);
+
+  const stats = arcade.stats.get('farm');
+  assert.equal(stats.marketDays, 1);
+  assert.equal(stats.packedUp, 1);
+  assert.ok(stats.earned > 0);
+  assert.ok(!arcade.stats.get('play'), 'a market day folded itself into free play\'s counters');
+});
