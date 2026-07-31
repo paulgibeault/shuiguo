@@ -44,7 +44,17 @@ test("sw.js keeps the CI-rewritable version line and this game's id", () => {
 test('gameId is consistent across manifest, sw, and index.html', () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, 'manifest.json'), 'utf8'));
   assert.equal(manifest.scope, '/shuiguo/');
-  assert.equal(manifest.start_url, '/shuiguo/');
+  // start_url is CI-owned: fleet-ci's version_bump rewrites it to a
+  // cache-busted './index.html?v=<version>' on every deploy (that is the
+  // documented point of the input). Pinning the literal string made this gate
+  // fail on the bump commit itself. What identity actually depends on is that
+  // start_url resolves INSIDE the scope — assert that, and leave the
+  // cache-buster to CI.
+  const resolved = new URL(manifest.start_url, `https://example.invalid${manifest.scope}`);
+  assert.ok(
+    resolved.pathname.startsWith(manifest.scope),
+    `start_url ${manifest.start_url} resolves to ${resolved.pathname}, outside scope ${manifest.scope}`,
+  );
   const index = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
   assert.match(index, /Arcade\.init\(\{ gameId: 'shuiguo' \}\)/);
   assert.match(index, /src="\/arcade-sdk\.js"/, 'evergreen SDK alias');
