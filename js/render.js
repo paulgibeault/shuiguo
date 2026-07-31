@@ -1,4 +1,4 @@
-// Canvas renderer for shuǐguǒ — the fruit stall and everything in it.
+// Canvas renderer for shuǐ guǒ tān — the fruit stall and everything in it.
 // Pure drawing; reads game state, never mutates it. Honors the launcher
 // settings snapshot it is handed ({ theme, fontScale, reducedMotion }).
 //

@@ -1,4 +1,4 @@
-// Input for shuǐguǒ (GRD §4): touch/drag anywhere aims the dropper along its
+// Input for shuǐ guǒ tān (GRD §4): touch/drag anywhere aims the dropper along its
 // line; release drops. A tap snaps the dropper to that x and drops. Keyboard
 // (arrows + space) is a first-class citizen too — cheap, and it makes the
 // game playable with a screen reader's focus on the canvas.

@@ -1,8 +1,8 @@
-// Audio for shuǐguǒ, via the launcher SDK's managed `Arcade.audio`.
+// Audio for shuǐ guǒ tān, via the launcher SDK's managed `Arcade.audio`.
 //
 // The pack IS the sound (js/soundpack.js). Every cue is a node graph built
 // from the shared element library's physical gestures, all feeding one room —
-// the fruit stand. No synthesis lives in this game; what belongs to shuǐguǒ
+// the fruit stand. No synthesis lives in this game; what belongs to shuǐ guǒ tān
 // is the design (which gestures, how loud, how far away).
 //
 // There is NO fallback profile. When the graph path is unavailable (stale

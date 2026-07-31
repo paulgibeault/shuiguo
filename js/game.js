@@ -1,4 +1,4 @@
-// shuǐguǒ game state machine. Pure module — no DOM, no Arcade globals; the
+// shuǐ guǒ tān game state machine. Pure module — no DOM, no Arcade globals; the
 // host (main.js) injects a `now()` clock and an rng, so every rule here runs
 // under node --test.
 //

@@ -1,13 +1,18 @@
-# shuǐguǒ 水果
+# shuǐ guǒ tān 水果摊
 
 A cozy fruit-drop physics puzzle for [Paul's Arcade](https://paulgibeault.github.io/).
 Drop fruit into the stall; two of a kind fuse into the next fruit up the
 chain — 樱桃 cherry all the way to 西瓜 watermelon. Don't let the pile cross
 the line.
 
-**Name note:** the *display* name is `shuǐguǒ` (pinyin for 水果, "fruit");
-the gameId / repo slug / URL is the ASCII `shuiguo`, per the fleet's
-kebab-case identity rule. Diacritics and hanzi live only in UI strings.
+**Name note:** the *display* name is `shuǐ guǒ tān` (pinyin for 水果摊,
+"fruit stall"); the gameId / repo slug / URL is the ASCII `shuiguo`, per the
+fleet's kebab-case identity rule. Diacritics and hanzi live only in UI
+strings. The slug still says `shuiguo` because it is load-bearing — it is
+the `Arcade.init` gameId, the service-worker and manifest scope, the
+catalog URL, and the prefix on every saved game (`arcade.v1.shuiguo.*`) —
+so it changes only when the repo itself is renamed, and players' saved
+state has to be migrated across that rename rather than silently orphaned.
 
 ## Rules (the GRD, condensed)
 

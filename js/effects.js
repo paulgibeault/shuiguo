@@ -1,4 +1,4 @@
-// Ephemeral visual juice for shuǐguǒ — merge pops, splash droplets, score
+// Ephemeral visual juice for shuǐ guǒ tān — merge pops, splash droplets, score
 // floats, landing squash.
 //
 // This is NOT game state. Effects are fed from the drained `g.events` queue,

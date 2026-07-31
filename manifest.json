@@ -1,6 +1,6 @@
 {
-  "name": "shuǐguǒ 水果",
-  "short_name": "shuǐguǒ",
+  "name": "shuǐ guǒ tān 水果摊",
+  "short_name": "shuǐ guǒ tān",
   "description": "Drop fruit, merge pairs, grow the watermelon. A cozy physics puzzle for Paul's Arcade.",
   "scope": "/shuiguo/",
   "start_url": "./index.html?v=0.1.4",

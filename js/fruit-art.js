@@ -1,4 +1,4 @@
-// Fruit characters for shuǐguǒ: every fruit's silhouette, texture, accessory
+// Fruit characters for shuǐ guǒ tān: every fruit's silhouette, texture, accessory
 // and face, drawn procedurally. No sprites, no image files — the art is
 // resolution-independent and weighs nothing.
 //
