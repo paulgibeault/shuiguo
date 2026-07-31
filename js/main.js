@@ -244,3 +244,6 @@ pullSettings();
 buildChart();
 applyResize();
 bootFromState();
+// Real state on every boot (also what proves the storage bridge in the
+// acceptance checklist — the first save write otherwise waits for gameplay).
+Arcade.stats.update('session', (p) => ({ launches: ((p && p.launches) || 0) + 1 }));
