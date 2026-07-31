@@ -1,6 +1,6 @@
 # shuǐguǒ 水果
 
-A cozy fruit-merge physics puzzle for [Paul's Arcade](https://paulgibeault.github.io/).
+A cozy fruit-drop physics puzzle for [Paul's Arcade](https://paulgibeault.github.io/).
 Drop fruit into the stall; two of a kind fuse into the next fruit up the
 chain — 樱桃 cherry all the way to 西瓜 watermelon. Don't let the pile cross
 the line.
