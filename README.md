@@ -57,18 +57,45 @@ but the 2D context they are handed, so they test under `node --test` against a
 stub. Fruit colours and face parameters live in the `FRUITS` / `FACES` tables
 in `js/constants.js`; the painters hold no palette of their own.
 
+## Reward
+
+The first time you ever **make** a fruit — merge-born, not dropped — a card
+pops: 桃 · táo · Peach · +128, big hanzi over readable pinyin. That is the
+bilingual-learning moment, so the tone marks get real type size. The card does
+**not** pause anything: the pile keeps falling behind it, aiming keeps working,
+and it leaves after 2.5 s or on a tap. Several discoveries in one cascade queue
+up rather than stacking. Discovery is persisted the instant it happens, and the
+menu's evolution chart doubles as the collection book — everything you have
+never made is a dimmed silhouette under a `?`, which is the reason to go get
+the pear.
+
+A chain of three or more flashes a banner (`3-chain! 三连!`) under the header,
+and game over opens the run: the biggest fruit you grew, drawn by the real
+painter, next to merges / best chain / watermelons / annihilations — rows that
+stayed at zero are left out. Best chain and fastest watermelon go to
+`Arcade.records`; a *resumed* game doesn't compete for the time, because its
+clock started in a session this one never saw.
+
+What counts as a discovery, and when a chain has finished, are pure functions
+over one drained event batch (`js/progress.js`) — `js/game.js` still knows
+nothing about collections or celebration.
+
 ## Integration
 
 Standard fleet game: evergreen `/arcade-sdk.js`, `Arcade.loop` render loop,
 state under `arcade.v1.shuiguo.*` (mid-game save auto-resumes; flushed
-synchronously in `onSuspend`), `Arcade.records` high score,
-`Arcade.scores` leaderboard, `Arcade.stats` counters. Theme, font scale and
-reduced motion honored in both the DOM chrome and the canvas.
+synchronously in `onSuspend`), `Arcade.records` high score, best chain and
+fastest watermelon, `Arcade.scores` leaderboard, `Arcade.stats` counters and
+the discovery set. Theme, font scale and reduced motion honored in both the DOM
+chrome and the canvas.
 
 Audio is a graph-cue sound pack (`js/soundpack.js`, registered via
 `ArcadeAudioElements.registerPack`) — a wooden fruit stand at midday; the
-merge cue's voice deepens as the chain climbs. No spec-cue fallback: without
-the element library the game is silent by design. Audition it offline:
+merge cue's voice deepens as the chain climbs, a sparkle of juice rides on top
+of it through a cascade, the plank creaks once as the pile crosses the line,
+and a discovery gets the watermelon's rising figure in miniature. No spec-cue
+fallback: without the element library the game is silent by design. Audition it
+offline:
 
 ```sh
 node ../paulgibeault.github.io/tools/soundpack/render.mjs --config soundpack.config.json
