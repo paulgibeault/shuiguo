@@ -91,6 +91,91 @@ export const PHYS = {
   impactSpeed: 120,     // approach above this is a "landing" worth a bounce event
 };
 
+// ── the farm half ──────────────────────────────────────────────────────────
+//
+// Campaign only. `FRUITS` above stays exactly the free-play table — a parallel
+// row per level keeps the farm's columns out of the arcade game's data, so
+// free play cannot drift by accident.
+//
+// A fruit's SALE value is its existing `score` (face value). What the farm adds
+// is how it is grown:
+//
+//   kind      'bed'  annual — plant a seed, grow once, harvest, plot empties
+//             'tree' perennial — matures once, then fruits on a cycle forever
+//             'vine' perennial that additionally needs a trellis on the plot
+//   growthMs  time from planting to the FIRST ripe crop
+//   cycleMs   perennials: time from harvest to ripe again. null for annuals.
+//   yield     fruit per harvest, dropped into the crate
+//   cost      元 for one seed (bed) or sapling (tree/vine)
+//
+// Deliberate shape: small fruit are cheap, fast and generous; big fruit are
+// capital. Pineapple is the outlier and the game's one running joke — real
+// ones take two years, so this one takes a day.
+//
+// The generosity floor (pinned by tests/fruits): an ANNUAL always clears its
+// seed in the single harvest it lives for, and a PERENNIAL clears its sapling
+// within a handful of cycles and is free forever after. The big beds run at a
+// steady 1.28× return per planting (pineapple 512/400, melon 1024/800,
+// watermelon 2048/1600) — which is why the watermelon plant bears two.
+const MIN = 60 * 1000;
+const HOUR = 60 * MIN;
+
+export const FARM = [
+  // level is index+1, matching FRUITS.
+  { kind: 'tree', growthMs:  4 * MIN,  cycleMs:  4 * MIN,  yield: 12, cost:   60 }, // cherry
+  { kind: 'bed',  growthMs:  3 * MIN,  cycleMs: null,      yield:  6, cost:    6 }, // strawberry
+  { kind: 'vine', growthMs:  6 * MIN,  cycleMs:  5 * MIN,  yield:  8, cost:   25 }, // grape
+  { kind: 'tree', growthMs: 12 * MIN,  cycleMs:  8 * MIN,  yield:  6, cost:   90 }, // dekopon
+  { kind: 'tree', growthMs: 20 * MIN,  cycleMs: 12 * MIN,  yield:  5, cost:  150 }, // persimmon
+  { kind: 'tree', growthMs: 40 * MIN,  cycleMs: 25 * MIN,  yield:  4, cost:  300 }, // apple
+  { kind: 'tree', growthMs: 90 * MIN,  cycleMs: 45 * MIN,  yield:  4, cost:  550 }, // pear
+  { kind: 'tree', growthMs:  3 * HOUR, cycleMs: 90 * MIN,  yield:  3, cost: 1000 }, // peach
+  { kind: 'bed',  growthMs: 24 * HOUR, cycleMs: null,      yield:  2, cost:  400 }, // pineapple
+  { kind: 'bed',  growthMs:  5 * HOUR, cycleMs: null,      yield:  2, cost:  800 }, // melon
+  { kind: 'bed',  growthMs:  8 * HOUR, cycleMs: null,      yield:  2, cost: 1600 }, // watermelon
+];
+
+// The pineapple takes longer than fruit worth four times as much, and that is
+// on purpose: it is the patient farmer's flex, an event rather than an
+// investment. To keep it from being strictly-worse economics, harvesting one
+// also grants a bonus seed of a random unlocked level (js/campaign.js).
+export const PINEAPPLE_LEVEL = 9;
+
+export function farmOf(level) { return FARM[level - 1]; }
+export function isPerennial(level) { return FARM[level - 1].kind !== 'bed'; }
+export function needsTrellis(level) { return FARM[level - 1].kind === 'vine'; }
+export function growthOf(level) { return FARM[level - 1].growthMs; }
+export function cycleOf(level) { return FARM[level - 1].cycleMs; }
+export function yieldOf(level) { return FARM[level - 1].yield; }
+export function seedCostOf(level) { return FARM[level - 1].cost; }
+
+// Every balance knob in the campaign, in one place. WP11 tunes these numbers;
+// nothing else in the campaign carries a magic constant of its own.
+//
+// Generosity-first: `firstRunFloor` exceeds `starterFarmCost` by a seed budget,
+// so the first appraisal always buys the farm AND something to plant in it —
+// the player can never end the opening broke.
+export const TUNING = {
+  giftCrate: { 1: 30, 2: 18, 3: 12, 4: 8, 5: 5 },  // ~apple-reach on an average first run
+  firstRunFloor: 700,          // floor on the FIRST appraisal only
+  starterFarmCost: 500,        // terrace 1 + a young cherry tree + 4 strawberry seeds
+  starterSeeds: { 2: 4 },      // what the starter farm comes planted-ready with
+  starterTree: 1,              // …and the sapling already in its tree plot
+  terraceCosts: [0, 500, 1200, 3000, 7500, 18000],  // index 0 is the starter terrace
+  plotsPerTerrace: 4,
+  treePlotsPerTerrace: 1,      // one of the four takes a tree/vine; the rest are beds
+  tidyBonus: 0.10,             // packed / sold-out: fraction of the subtotal
+  seedDripChance: 0.15,        // 0 disables the drip exactly — no epsilon
+  firstUnlockSeeds: 2,         // free packet when a level is first merged in campaign
+  waterMs: 6 * HOUR,           // one watering covers a session and then some
+  sprinklerCost: 800,          // per terrace: that terrace is watered forever
+  irrigationCost: 8000,        // whole farm, forever — the "made it" purchase
+  trellisCost: 300,            // per plot, enables vines
+  fertilizerCost: 50,          // consumable: halves the remaining stage time
+};
+
+export const MAX_TERRACES = TUNING.terraceCosts.length;
+
 // Game feel / rules.
 export const RULES = {
   overLineMs: 3000,     // continuous time above deadline ⇒ game over (GRD §5)

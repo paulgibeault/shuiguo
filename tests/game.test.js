@@ -1,6 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { makeGame, start, drop, tick, aim, serialize, restore, clampDropX } from '../js/game.js';
+import {
+  makeGame, start, drop, tick, aim, serialize, restore, clampDropX,
+  finish, isSoldOut, isSettled,
+} from '../js/game.js';
 import { makeBody, settled } from '../js/physics.js';
 import { WORLD, RULES, PHYS, radiusOf, scoreOf, ANNIHILATE_SCORE, MAX_SPAWN_LEVEL } from '../js/constants.js';
 import { makeRng } from '../js/arcade-rng.js';
@@ -380,4 +383,202 @@ test('restore rejects hostile or malformed saves', () => {
   assert.equal(restore(g, { v: 1, current: 1, next: 1, fruits: [[99, 10, 10]] }), false, 'level out of range');
   assert.equal(restore(g, { v: 1, current: 8, next: 1, fruits: [] }), false, 'unspawnable held level');
   assert.equal(restore(g, { v: 1, current: 1, next: 1, fruits: [[3, NaN, 10]] }), false, 'NaN position');
+});
+
+// ── the injectable spawn source (campaign) ─────────────────────────────────
+//
+// Free play draws forever from the rng; the campaign draws from a finite crate
+// that may hold anything up to a watermelon. The seam between them is one
+// injected function, and the first thing it must prove is that it changed
+// nothing at all for the mode that was already shipping.
+
+test('REGRESSION: the default spawn sequence is byte-identical to the rng dropper', () => {
+  // What the dropper produced before drawFruit existed: rng.int(1,5), forever,
+  // twice at makeGame and once per drop. Pinned against the raw generator
+  // rather than against a recorded list, so it holds for any seed.
+  for (const seed of [1, 42, 1234, 0xC0FFEE]) {
+    const oracle = makeRng(seed);
+    const expected = Array.from({ length: 60 }, () => oracle.int(1, MAX_SPAWN_LEVEL));
+
+    const g = makeGame({ rng: makeRng(seed), now: makeClock() });
+    g.state = 'playing';               // start() re-rolls; this pins makeGame's own two
+    const seen = [g.current, g.next];
+    for (let i = 0; i < 58; i++) {
+      g.canDrop = true;
+      drop(g);
+      g.bodies.length = 0;
+      seen.push(g.next);
+    }
+    assert.deepEqual(seen, expected, `spawn sequence drifted for seed ${seed}`);
+  }
+});
+
+test('REGRESSION: start() re-rolls from the rng exactly as it always did', () => {
+  const oracle = makeRng(77);
+  oracle.int(1, MAX_SPAWN_LEVEL); oracle.int(1, MAX_SPAWN_LEVEL);   // makeGame's two
+  const g = makeGame({ rng: makeRng(77), now: makeClock() });
+  start(g);
+  assert.equal(g.current, oracle.int(1, MAX_SPAWN_LEVEL));
+  assert.equal(g.next, oracle.int(1, MAX_SPAWN_LEVEL));
+});
+
+// A crate-backed draw: hands out `stock` in order, then null forever.
+function cratedGame(stock) {
+  const left = stock.slice();
+  const now = makeClock();
+  const g = makeGame({ rng: makeRng(5), now, drawFruit: () => (left.length ? left.shift() : null) });
+  assert.equal(g.current, null, 'a crated game tipped fruit out before it opened');
+  start(g);
+  g.events.length = 0;
+  return { g, now, left };
+}
+
+test('a crate feeds the dropper instead of the rng, and empties exactly', () => {
+  const { g, now } = cratedGame([1, 2, 3, 4]);
+  assert.equal(g.current, 1);
+  assert.equal(g.next, 2);
+  assert.ok(drop(g, 100)); sim(g, now, 0.6);
+  assert.equal(g.current, 2);
+  assert.equal(g.next, 3);
+  assert.equal(g.bodies.length, 1);
+  assert.equal(g.bodies[0].level, 1, 'the crate handed over a different fruit than it promised');
+});
+
+test('the preview empties first, then the dropper, then the stall is sold out', () => {
+  const { g, now } = cratedGame([1, 2, 3]);
+  assert.ok(!isSoldOut(g));
+
+  drop(g, 100); sim(g, now, 0.6);        // holds 2, previews 3
+  assert.equal(g.next, 3);
+  drop(g, 150); sim(g, now, 0.6);        // holds 3, previews nothing
+  assert.equal(g.current, 3);
+  assert.equal(g.next, null);
+  assert.ok(!isSoldOut(g), 'sold out with a fruit still in hand');
+
+  drop(g, 200); sim(g, now, 0.6);        // both hands empty
+  assert.equal(g.current, null);
+  assert.equal(g.next, null);
+  assert.ok(isSoldOut(g));
+  assert.equal(g.bodies.length, 3, 'every crated fruit should have reached the board');
+});
+
+test('an empty dropper drops nothing and aims without throwing', () => {
+  const { g, now } = cratedGame([1]);
+  drop(g, 100); sim(g, now, 0.6);
+  assert.ok(isSoldOut(g));
+  assert.equal(drop(g, 180), false, 'dropped a fruit that does not exist');
+  assert.equal(g.bodies.length, 1);
+  aim(g, 9999);
+  assert.equal(g.dropX, WORLD.width, 'an empty hand clamps to the bare wall');
+  assert.equal(clampDropX(g, -50), 0);
+  assert.equal(g.state, 'playing', 'running out of fruit is not itself the end of the run');
+});
+
+test('a crate of big fruit clamps to the walls by what is actually held', () => {
+  const { g } = cratedGame([11, 1]);
+  const r = radiusOf(11);
+  assert.equal(clampDropX(g, -100), r);
+  assert.equal(clampDropX(g, 9999), WORLD.width - r);
+  assert.ok(r * 2 < WORLD.width, 'a watermelon that cannot be dropped at all is a bug, not a risk');
+});
+
+test('the board settles, and isSettled says so', () => {
+  const { g, now } = cratedGame([1, 1]);
+  drop(g, 100);
+  sim(g, now, 0.1);
+  assert.ok(!isSettled(g), 'a fruit in mid-air is not settled');
+  sim(g, now, 4);
+  assert.ok(isSettled(g));
+});
+
+// ── endings ────────────────────────────────────────────────────────────────
+
+test('every ending names itself on the gameover event', () => {
+  for (const reason of ['packed', 'sold-out']) {
+    const { g } = cratedGame([1, 2]);
+    assert.ok(finish(g, reason));
+    assert.equal(g.state, 'over');
+    const over = g.events.filter((e) => e.type === 'gameover');
+    assert.equal(over.length, 1);
+    assert.equal(over[0].reason, reason);
+    assert.equal(over[0].score, g.score);
+  }
+});
+
+test('toppling still ends the run, and still calls itself toppled', () => {
+  const { g, now } = playingGame();
+  const b = makeBody(3, 180, WORLD.deadlineY - 5);   // top above the line
+  b.touched = true;
+  g.bodies.push(b);
+  for (let i = 0; i < 40 && g.state === 'playing'; i++) {
+    b.y = WORLD.deadlineY - 5; b.vx = 0; b.vy = 0;   // pin it there
+    tick(g, 1 / 240);
+    now.advance(100);
+  }
+  assert.equal(g.state, 'over');
+  const over = g.events.filter((e) => e.type === 'gameover');
+  assert.equal(over.length, 1);
+  assert.equal(over[0].reason, 'toppled', 'the free-play ending changed its name');
+});
+
+test('finish() defaults to toppled, and the stall can only close once', () => {
+  const { g } = playingGame();
+  assert.ok(finish(g));
+  assert.equal(g.events.filter((e) => e.type === 'gameover')[0].reason, 'toppled');
+  assert.equal(finish(g, 'packed'), false, 'the stall closed twice');
+  assert.equal(g.events.filter((e) => e.type === 'gameover').length, 1);
+  assert.equal(finish(makeGame({ rng: makeRng(1), now: makeClock() }), 'packed'), false,
+    'a game that never started cannot end');
+});
+
+test('finish() mid-fall keeps the falling fruit on the board for the appraisal', () => {
+  const { g, now } = cratedGame([5, 5, 5]);
+  drop(g, 180);
+  sim(g, now, 0.1);                       // still in the air
+  assert.ok(finish(g, 'packed'));
+  assert.equal(g.bodies.length, 1, 'the fruit in flight was lost');
+  sim(g, now, 2);
+  assert.equal(g.bodies.length, 1, 'a finished game kept simulating');
+});
+
+// ── crated saves ───────────────────────────────────────────────────────────
+
+test('a crated board saves and restores its big fruit and its empty hands', () => {
+  const { g, now } = cratedGame([11, 9, 7]);
+  drop(g, 180); sim(g, now, 2);
+  const save = serialize(g);
+  assert.equal(save.current, 9);
+
+  const g2 = makeGame({ rng: makeRng(0), now: makeClock(), drawFruit: () => null });
+  assert.ok(restore(g2, save), 'a campaign board would not restore');
+  assert.equal(g2.current, 9);
+  assert.equal(g2.next, 7);
+  assert.equal(g2.bodies[0].level, 11);
+
+  // …and the sold-out end state round-trips too
+  const { g: g3, now: n3 } = cratedGame([1]);
+  drop(g3, 100); sim(g3, n3, 1);
+  const g4 = makeGame({ rng: makeRng(0), now: makeClock(), drawFruit: () => null });
+  assert.ok(restore(g4, serialize(g3)));
+  assert.ok(isSoldOut(g4));
+});
+
+test('free play stays exactly as strict about a save as it always was', () => {
+  const now = makeClock();
+  const free = makeGame({ rng: makeRng(1), now });
+  const crated = makeGame({ rng: makeRng(1), now, drawFruit: () => 1 });
+
+  // a level free play could never have spawned
+  const big = { v: 1, current: 11, next: 1, fruits: [] };
+  assert.equal(restore(free, big), false, 'free play accepted a watermelon in the dropper');
+  assert.equal(restore(crated, big), true);
+
+  // an empty hand is meaningless without a crate behind it
+  const empty = { v: 1, current: null, next: null, fruits: [] };
+  assert.equal(restore(free, empty), false, 'free play accepted an empty dropper');
+  assert.equal(restore(crated, empty), true);
+
+  // and the hands must empty in order, in either mode
+  assert.equal(restore(crated, { v: 1, current: null, next: 3, fruits: [] }), false,
+    'a save emptied the dropper before the preview');
 });
