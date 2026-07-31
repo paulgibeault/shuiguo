@@ -278,6 +278,81 @@ test('an untouched (still falling) fruit cannot trip the deadline', () => {
   assert.equal(g.state, 'playing');
 });
 
+test('tally.bestLevel follows the biggest fruit the game ever held', () => {
+  const { g } = playingGame();
+  assert.equal(g.tally.bestLevel, 0, 'nothing held yet');
+
+  g.current = 4;
+  drop(g, 100);
+  assert.equal(g.tally.bestLevel, 4, 'the dropper counts — you held a dekopon');
+
+  // …and a merge that outgrows it moves it on
+  const r = radiusOf(6);
+  g.bodies.push(
+    makeBody(6, 250, WORLD.floorY - r),
+    makeBody(6, 250 + 2 * r - 0.5, WORLD.floorY - r),
+  );
+  tick(g, 1 / 240);
+  assert.equal(g.bodies.some((b) => b.level === 7), true);
+  assert.equal(g.tally.bestLevel, 7);
+
+  // a smaller drop afterwards must not walk it back
+  g.current = 1;
+  g.canDrop = true;
+  drop(g, 40);
+  assert.equal(g.tally.bestLevel, 7);
+});
+
+test('bestLevel survives the save round-trip', () => {
+  const { g, now } = playingGame(99);
+  g.current = 5;
+  drop(g, 120); sim(g, now, 1.2);
+  assert.equal(g.tally.bestLevel, 5);
+
+  const g2 = makeGame({ rng: makeRng(0), now: makeClock() });
+  assert.ok(restore(g2, serialize(g)));
+  assert.equal(g2.tally.bestLevel, 5);
+});
+
+test('a save written before bestLevel existed recovers it from the board', () => {
+  const now = makeClock();
+  const g = makeGame({ rng: makeRng(3), now });
+  // an old save: tally without the field at all (the version stays 1)
+  assert.ok(restore(g, {
+    v: 1, score: 300, current: 2, next: 3,
+    tally: { merges: 9, watermelons: 0, annihilations: 0, chainBest: 2 },
+    fruits: [[3, 100, 400], [8, 200, 480], [5, 300, 500]],
+  }));
+  assert.equal(g.tally.bestLevel, 8, 'the peach on the counter is proof');
+  assert.equal(g.tally.merges, 9, 'the fields that were there are kept');
+});
+
+test('restore refuses to take a nonsense bestLevel from a save', () => {
+  const now = makeClock();
+  const g = makeGame({ rng: makeRng(3), now });
+  for (const bad of [999, -5, 'watermelon', 4.5, null]) {
+    assert.ok(restore(g, {
+      v: 1, score: 0, current: 1, next: 1,
+      tally: { bestLevel: bad },
+      fruits: [[6, 100, 400]],
+    }));
+    assert.equal(g.tally.bestLevel, 6, `bestLevel ${JSON.stringify(bad)} fell back to the board`);
+  }
+});
+
+test('a bestLevel above everything on the board is kept — annihilation earns it', () => {
+  const now = makeClock();
+  const g = makeGame({ rng: makeRng(3), now });
+  // two watermelons wiped each other out; the board is small again, but an
+  // 11 was unquestionably reached
+  assert.ok(restore(g, {
+    v: 1, score: 2048, current: 1, next: 2,
+    tally: { merges: 40, watermelons: 2, annihilations: 1, chainBest: 3, bestLevel: 11 },
+    fruits: [[3, 100, 500], [2, 200, 520]],
+  }));
+  assert.equal(g.tally.bestLevel, 11);
+});
+
 test('save round-trip: board, queue, score, and rng sequence survive', () => {
   const { g, now } = playingGame(1234);
   drop(g, 100); sim(g, now, 1.6);

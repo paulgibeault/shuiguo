@@ -21,7 +21,7 @@ export function makeGame({ rng, now }) {
     lockedAt: null,      // wall-clock ms when input locked (drop happened)
     overAt: null,        // set when the game ends
     // per-game tallies the host folds into Arcade.stats at game over
-    tally: { merges: 0, watermelons: 0, annihilations: 0, chainBest: 0 },
+    tally: freshTally(),
     events: [],          // drained by the host each frame → sfx/particles
     rng, now,
   };
@@ -31,6 +31,17 @@ export function makeGame({ rng, now }) {
 }
 
 function rollSpawn(rng) { return rng.int(1, MAX_SPAWN_LEVEL); }
+
+// `bestLevel` is the biggest fruit this game ever HELD — set by the dropper as
+// well as by merges, so the game-over screen always has a fruit to show even
+// for a game that never merged anything. Everything else counts events.
+function freshTally() {
+  return { merges: 0, watermelons: 0, annihilations: 0, chainBest: 0, bestLevel: 0 };
+}
+
+function reachedLevel(g, level) {
+  if (level > g.tally.bestLevel) g.tally.bestLevel = level;
+}
 
 export function clampDropX(g, x) {
   const r = radiusOf(g.current);
@@ -49,7 +60,7 @@ export function start(g) {
   g.canDrop = true;
   g.lockedAt = null;
   g.overAt = null;
-  g.tally = { merges: 0, watermelons: 0, annihilations: 0, chainBest: 0 };
+  g.tally = freshTally();
   g.current = rollSpawn(g.rng);
   g.next = rollSpawn(g.rng);
   g.dropX = clampDropX(g, WORLD.width / 2);
@@ -66,6 +77,7 @@ export function drop(g, x) {
   g.dropX = clampDropX(g, g.dropX);          // new fruit may be fatter — re-clamp
   g.canDrop = false;
   g.lockedAt = g.now();
+  reachedLevel(g, level);
   g.events.push({ type: 'drop', level });
   return true;
 }
@@ -130,6 +142,7 @@ function resolveMerges(g, firstContacts) {
       nb.bornAt = t;              // the renderer's cue for a moment of delight
       g.bodies.push(nb);
       g.score += scoreOf(born);
+      reachedLevel(g, born);
       if (born === MAX_LEVEL) g.tally.watermelons++;
       // `id` lets the renderer key the newborn's pop animation to this body
       g.events.push({ type: 'merge', id: nb.id, level: born, x: mx, y: my, score: scoreOf(born), chain });
@@ -208,7 +221,20 @@ export function restore(g, save) {
   g.score = typeof save.score === 'number' && isFinite(save.score) ? Math.max(0, Math.floor(save.score)) : 0;
   g.current = save.current;
   g.next = save.next;
-  g.tally = { merges: 0, watermelons: 0, annihilations: 0, chainBest: 0, ...(save.tally || {}) };
+  g.tally = { ...freshTally(), ...(save.tally || {}) };
+  // bestLevel indexes FRUITS, so unlike the other counters it must be sound
+  // even from a hostile save. It is also additive — saves written before it
+  // existed have none, and the save version stays 1 — and the board itself is
+  // proof of what was reached, so recover the floor from it rather than
+  // resetting the player to zero.
+  //
+  // A stored value outside 1..MAX_LEVEL is not clamped, it is discarded: the
+  // board is better evidence than a number we don't believe. In range it is
+  // kept even when it beats every fruit on the board, because it legitimately
+  // can — annihilating two watermelons leaves an 11 behind on a board of 3s.
+  const saved = g.tally.bestLevel;
+  g.tally.bestLevel = Number.isInteger(saved) && saved >= 0 && saved <= MAX_LEVEL ? saved : 0;
+  for (const b of g.bodies) reachedLevel(g, b.level);
   if (typeof save.rngState === 'number') g.rng.setState(save.rngState);
   g.canDrop = true;
   g.lockedAt = null;

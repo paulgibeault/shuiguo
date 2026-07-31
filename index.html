@@ -32,7 +32,15 @@
       <div class="stat"><span class="label">Best</span><span id="best" class="value">0</span></div>
     </header>
 
-    <canvas id="board" tabindex="0" aria-label="Fruit drop board — arrow keys aim, space drops"></canvas>
+    <!-- The board and everything that floats over it WITHOUT pausing it: the
+         chain banner and the discovery cards. Both are inert to pointers
+         except the card itself (tap to dismiss), so play never stops. The
+         sheets below are later siblings and cover this whole stage. -->
+    <div class="stage">
+      <canvas id="board" tabindex="0" aria-label="Fruit drop board — arrow keys aim, space drops"></canvas>
+      <div id="banner" class="banner" role="status" aria-live="polite" hidden></div>
+      <div id="cards" class="cards" aria-live="polite"></div>
+    </div>
 
     <section id="menu" class="sheet">
       <h1 class="sign"><span class="sign-hanzi">水果</span><span class="sign-name">shuǐguǒ</span></h1>
@@ -46,6 +54,22 @@
       <h2>The stall is full! 满了!</h2>
       <p class="final">Score <strong id="final-score">0</strong></p>
       <p id="new-best" class="new-best" hidden>New best! 新纪录!</p>
+
+      <!-- The run in one glance: what you grew, and what it took. Filled from
+           g.tally by main.js; rows that stayed at zero are left out. -->
+      <div class="summary">
+        <figure class="biggest">
+          <canvas id="over-fruit" class="biggest-art" role="img"></canvas>
+          <figcaption>
+            <span class="label">Biggest fruit</span>
+            <span class="biggest-name">
+              <b id="over-fruit-hanzi"></b> <i id="over-fruit-pinyin"></i>
+            </span>
+          </figcaption>
+        </figure>
+        <dl id="over-stats" class="stat-grid"></dl>
+      </div>
+
       <button id="again" class="big" type="button">Again 再来</button>
       <button id="to-menu" type="button">Menu</button>
     </section>

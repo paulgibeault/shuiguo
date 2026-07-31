@@ -48,10 +48,17 @@ body {
   flex-direction: column;
 }
 
-#board {
+/* The board plus the two surfaces that float over it without pausing it. */
+.stage {
+  position: relative;
   flex: 1;
-  width: 100%;
   min-height: 0;
+}
+#board {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
   touch-action: none;
   outline: none;
 }
@@ -84,6 +91,100 @@ body {
 }
 #next { width: 2.75rem; height: 2.75rem; }
 .next-name { font-size: 0.7rem; opacity: 0.8; }
+
+/* ── chain banner ────────────────────────────────────────────────────────
+ * A chain of three or more deserves a word, but the HUD is already three
+ * items wide on a phone — so this is a transient strip under the header
+ * instead of a fourth permanent stat. Pointer-inert: play never stops. */
+.banner {
+  position: absolute;
+  top: 0.6rem;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 2;
+  pointer-events: none;
+  padding: 0.3rem 1.1rem;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 1.05rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  box-shadow: 0 3px 10px var(--shadow);
+  animation: banner-in 0.28s ease-out;
+}
+.banner[hidden] { display: none; }
+
+@keyframes banner-in {
+  0% { transform: translateX(-50%) scale(0.7); opacity: 0; }
+  100% { transform: translateX(-50%) scale(1); opacity: 1; }
+}
+
+/* ── discovery cards ─────────────────────────────────────────────────────
+ * "First time I made a peach!" — the game's bilingual-learning moment, so
+ * the hanzi and the pinyin are the typography and everything else defers to
+ * them. The layer is inert; only the card takes the tap that dismisses it. */
+.cards {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+.card {
+  pointer-events: auto;
+  cursor: pointer;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  grid-template-areas:
+    "kicker kicker"
+    "art    name";
+  align-items: center;
+  gap: 0.2rem 0.9rem;
+  padding: 0.9rem 1.3rem 1rem;
+  border-radius: 1.1rem;
+  border: 2px solid var(--wood-edge);
+  background: var(--card);
+  color: var(--ink);
+  box-shadow: 0 8px 24px var(--shadow);
+  text-align: left;
+  animation: card-in 0.34s cubic-bezier(0.2, 1.5, 0.5, 1);
+}
+.card.leaving { animation: card-out 0.22s ease-in forwards; }
+.card-kicker {
+  grid-area: kicker;
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--accent);
+  font-weight: 700;
+  margin-bottom: 0.15rem;
+}
+.card-art { grid-area: art; width: 4.6rem; height: 4.6rem; }
+.card-name { grid-area: name; display: flex; flex-direction: column; gap: 0.05rem; }
+/* The learning moment: hanzi big enough to trace, pinyin big enough to say
+ * out loud — tone marks are the whole point, so this is not a caption size. */
+.card-hanzi { font-size: 2.1rem; line-height: 1.1; letter-spacing: 0.06em; }
+.card-pinyin { font-size: 1.15rem; line-height: 1.3; opacity: 0.9; }
+.card-en { font-size: 0.8rem; opacity: 0.6; }
+.card-score { font-size: 0.95rem; font-weight: 700; color: var(--accent); margin-top: 0.15rem; }
+
+@keyframes card-in {
+  0% { transform: scale(0.55); opacity: 0; }
+  100% { transform: scale(1); opacity: 1; }
+}
+@keyframes card-out {
+  0% { transform: scale(1); opacity: 1; }
+  100% { transform: scale(0.9); opacity: 0; }
+}
+
+/* Reduced motion needs no rule here: the SDK's base stylesheet collapses
+ * every animation on the page to one instant frame (the same mechanism
+ * .new-best relies on), so the card and the banner simply appear. They are
+ * information — they must still show, and they do. */
 
 /* ── sheets (menu / game over) ───────────────────────────────────────── */
 .sheet {
@@ -164,6 +265,45 @@ button.big {
   padding: 0.7rem 2.6rem;
 }
 
+/* ── game-over summary ───────────────────────────────────────────────────
+ * The run in one card: the biggest fruit you grew on the left, what it took
+ * on the right. Everything is rem, and the whole block wraps to a column
+ * before it can overflow at --font-scale 1.4. */
+.summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 0.6rem 1.4rem;
+  max-width: 24rem;
+  padding: 0.85rem 1.2rem;
+  border-radius: 1rem;
+  background: var(--card);
+  box-shadow: 0 3px 12px var(--shadow);
+}
+.biggest {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin: 0;
+  text-align: left;
+}
+.biggest-art { width: 3.4rem; height: 3.4rem; flex: none; }
+.biggest figcaption { display: flex; flex-direction: column; gap: 0.1rem; align-items: flex-start; }
+.biggest-name { font-size: 1.25rem; line-height: 1.2; }
+.biggest-name i { font-style: normal; font-size: 0.95rem; opacity: 0.75; }
+
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(2, auto);
+  gap: 0.3rem 1.1rem;
+  margin: 0;
+  text-align: left;
+}
+.stat-grid div { display: flex; flex-direction: column; }
+.stat-grid dt { font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.08em; opacity: 0.65; }
+.stat-grid dd { margin: 0; font-size: 1.1rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+
 /* ── evolution chart ─────────────────────────────────────────────────── */
 .chart {
   display: flex;
@@ -185,4 +325,11 @@ button.big {
 }
 .chip-art { width: 2.1rem; height: 2.1rem; }
 .chip figcaption { font-size: 0.6rem; opacity: 0.75; line-height: 1; }
+/* A fruit you have never MADE is a silhouette with its name withheld — the
+ * chart doubles as the collection book, and the blank pear is the reason to
+ * go get one. contrast(0) flattens the painted fruit to a single tone, so
+ * the shape survives and every cue that identifies it does not. */
+.chip.locked .chip-art { filter: grayscale(1) contrast(0) brightness(0.72); opacity: 0.42; }
+[data-theme="dark"] .chip.locked .chip-art { filter: grayscale(1) contrast(0) brightness(1.7); opacity: 0.3; }
+.chip.locked figcaption { opacity: 0.5; letter-spacing: 0.05em; }
 .arrow { font-size: 0.7rem; opacity: 0.5; align-self: center; margin-bottom: 0.6rem; }

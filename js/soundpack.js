@@ -44,8 +44,11 @@
   const SENDS = {
     'drop': 0.16,
     'merge': 0.22,
+    'chain': 0.20,
     'watermelon': 0.42,
     'annihilate': 0.48,
+    'warning': 0.30,
+    'discover': 0.25,
     'game-over': 0.34,
     'menu-click': 0.12,
   };
@@ -127,6 +130,25 @@
       }
     },
 
+    // A cascade. Played ON TOP OF the merge cue, never instead of it: the
+    // merge is still the event, this is only the shine on it. Juice thrown
+    // clear of a burst that was bigger than one fruit — same water, higher up
+    // and faster, more of it the deeper the chain went.
+    'chain': function (ctx, o, t, p, r) {
+      const chain = Math.max(2, Math.min((p && p.chain) || 2, 6));
+      const depth = (chain - 2) / 4;                  // 0 at a 2-chain, 1 at a 6
+      const n = 2 + Math.round(depth * 1.6);          // 2 → 3 droplets
+      const base = 620 * Math.pow(1.14, chain - 2);   // and each one brighter
+      for (let i = 0; i < n; i++) {
+        S.droplet(ctx, o, t + 0.02 + i * S.between(r, 0.045, 0.075), {
+          f0: base * S.between(r, 0.92, 1.15) * Math.pow(1.18, i),
+          f1: base * S.between(r, 2.4, 3.2),
+          dur: 0.045,
+          gain: FREQUENT * (0.30 + 0.22 * depth),
+        });
+      }
+    },
+
     // A watermelon is born — the goal of the whole game. The merge gesture at
     // full size, then a slow warm swell under it. Big, but still made of the
     // same two materials; a fanfare would belong to a different game.
@@ -172,6 +194,33 @@
           dur: 0.07, gain: 0.05,
         });
       }
+    },
+
+    // A fruit has crossed the line. The stall takes the weight and a plank
+    // complains — ONE creak, on the way in, not a siren that runs the whole
+    // time you are in trouble. Short and low: the eye already has the red
+    // vignette and the trembling pile, so the ear only has to say "heard that".
+    // Deliberately kin to the game-over creak an octave up — the same plank,
+    // earlier in the same sentence.
+    'warning': function (ctx, o, t, p, r) {
+      S.creak(ctx, o, t, {
+        f0: 320 * S.cents(r, 20), f1: 210, Q: 7, dur: 0.34, gain: 0.085,
+        seed: (r() * 1e6) | 0,
+      });
+      S.thump(ctx, o, t + 0.02, { f0: 96, f1: 58, dur: 0.22, gain: 0.06 });
+    },
+
+    // A fruit made for the first time ever. The watermelon cue's rising figure
+    // in miniature — two flesh tones up a fifth and a droplet off the top —
+    // so a discovery is heard as a small relative of the big prize rather than
+    // as a UI chime from some other game.
+    'discover': function (ctx, o, t, p, r) {
+      const base = 300 * S.cents(r, 12);
+      flesh(ctx, o, t, r, base, 0.11, 0.34);
+      flesh(ctx, o, t + 0.13, r, base * 1.5, 0.11, 0.5);
+      S.droplet(ctx, o, t + 0.20, {
+        f0: base * 2.2, f1: base * 5.4, dur: 0.06, gain: 0.055,
+      });
     },
 
     // Overfilled — the stall settles. A slow creak of the plank under too
