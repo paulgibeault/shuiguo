@@ -1,8 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { makeGame, start, drop, tick, aim, serialize, restore, clampDropX } from '../js/game.js';
-import { makeBody } from '../js/physics.js';
-import { WORLD, RULES, radiusOf, scoreOf, ANNIHILATE_SCORE, MAX_SPAWN_LEVEL } from '../js/constants.js';
+import { makeBody, settled } from '../js/physics.js';
+import { WORLD, RULES, PHYS, radiusOf, scoreOf, ANNIHILATE_SCORE, MAX_SPAWN_LEVEL } from '../js/constants.js';
 import { makeRng } from '../js/arcade-rng.js';
 
 // A controllable clock: tests advance it by hand.
@@ -50,13 +50,81 @@ test('dropper clamps to the container walls for the held fruit size', () => {
   assert.equal(g.dropX, r);
 });
 
-test('drop locks input; settle re-enables it', () => {
+test('drop locks input; a fixed cooldown re-enables it', () => {
   const { g, now } = playingGame();
   assert.ok(drop(g, 180));
   assert.equal(g.canDrop, false);
-  assert.equal(drop(g, 180), false, 'locked while falling');
-  sim(g, now, 3);
-  assert.equal(g.canDrop, true, 'unlocked after settle');
+  assert.equal(drop(g, 180), false, 'locked immediately after the drop');
+
+  // just shy of the cooldown: still locked, even though the fruit is airborne
+  sim(g, now, (RULES.dropCooldownMs - 20) / 1000);
+  assert.equal(g.canDrop, false, `still locked at ${RULES.dropCooldownMs - 20}ms`);
+
+  sim(g, now, 0.05);
+  assert.equal(g.canDrop, true, 'unlocked once the cooldown elapses');
+  assert.equal(g.lockedAt, null);
+});
+
+test('the cooldown does NOT wait for the pile to settle', () => {
+  const { g, now } = playingGame();
+  // a deliberately unsettled board: a fruit flung across the box
+  const flyer = makeBody(2, 60, 200);
+  flyer.vx = 900; flyer.vy = -400;
+  g.bodies.push(flyer);
+  drop(g, 180);
+  sim(g, now, (RULES.dropCooldownMs + 20) / 1000);
+  assert.equal(settled(g.bodies), false, 'board is still very much in motion');
+  assert.equal(g.canDrop, true, 'input is free anyway');
+});
+
+test('aiming is never blocked by the input lock', () => {
+  const { g } = playingGame();
+  drop(g, 180);
+  assert.equal(g.canDrop, false);
+  aim(g, 60);
+  assert.ok(Math.abs(g.dropX - 60) < 1e-9, 'aim still moves while locked');
+});
+
+test('drops can be repeated at the cooldown cadence', () => {
+  const { g, now } = playingGame();
+  const step = RULES.dropCooldownMs / 1000;
+  let dropped = 0;
+  for (let i = 0; i < 6; i++) {
+    if (drop(g, 40 + i * 12)) dropped++;
+    sim(g, now, step + 0.01);
+  }
+  assert.equal(dropped, 6, 'every attempt at the cadence lands');
+  assert.equal(g.bodies.length > 0, true);
+});
+
+test('stacking over the line still ends the game while dropping at full speed', () => {
+  const { g, now } = playingGame();
+  // A pile the player has already stacked past the line: alternating levels so
+  // nothing in it can merge its way back to safety.
+  const X = WORLD.width / 2;
+  let y = WORLD.floorY;
+  for (const level of [7, 8, 7, 8, 7]) {
+    const r = radiusOf(level);
+    y -= r;
+    const b = makeBody(level, X, y);
+    b.touched = true;
+    g.bodies.push(b);
+    y -= r;
+  }
+  const top = g.bodies.at(-1);
+  assert.ok(top.y - top.r < WORLD.deadlineY, 'the pile really is over the line');
+
+  // Now keep dropping into the far corner as fast as the cooldown allows. The
+  // deadline clock is independent of the input lock and must still run out.
+  let drops = 0;
+  for (let i = 0; i < 200 && g.state === 'playing'; i++) {
+    g.current = 1;
+    if (g.canDrop && drop(g, 20)) drops++;
+    sim(g, now, 0.05);
+  }
+  assert.equal(g.state, 'over', 'the line still claims the pile');
+  assert.ok(g.events.some((e) => e.type === 'gameover'));
+  assert.ok(drops >= 5, `the player was dropping throughout (${drops} drops)`);
 });
 
 test('two equal fruits merge at their midpoint into level+1 and score it', () => {
@@ -91,6 +159,59 @@ test('chain reaction: a newborn immediately merges with its own level', () => {
   const chainEv = g.events.filter((e) => e.type === 'merge');
   assert.equal(chainEv.length, 2);
   assert.equal(g.tally.chainBest, 2);
+});
+
+test('the merge event names the newborn body, so juice can key off it', () => {
+  const { g } = playingGame();
+  const r = radiusOf(2);
+  g.bodies.push(
+    makeBody(2, 100, WORLD.floorY - r),
+    makeBody(2, 100 + 2 * r - 0.5, WORLD.floorY - r),
+  );
+  tick(g, 1 / 240);
+  const ev = g.events.find((e) => e.type === 'merge');
+  assert.ok(ev, 'merge event emitted');
+  assert.equal(ev.id, g.bodies[0].id, 'event id is the surviving newborn');
+});
+
+test('a hard landing emits a bounce event, rate-limited per body', () => {
+  const { g, now } = playingGame();
+  const b = makeBody(1, 180, WORLD.floorY - radiusOf(1) - 2);
+  b.vy = PHYS.impactSpeed * 4;
+  g.bodies.push(b);
+
+  tick(g, 1 / 240);
+  const first = g.events.filter((e) => e.type === 'bounce');
+  assert.equal(first.length, 1);
+  assert.equal(first[0].id, b.id);
+  assert.equal(first[0].level, 1);
+  assert.ok(first[0].speed >= PHYS.impactSpeed);
+  g.events.length = 0;
+
+  // hit it again inside the rate-limit window: silent
+  b.y = WORLD.floorY - b.r - 2; b.vy = PHYS.impactSpeed * 4;
+  now.advance(RULES.impactEventMs - 20);
+  tick(g, 1 / 240);
+  assert.equal(g.events.filter((e) => e.type === 'bounce').length, 0, 'rate-limited');
+
+  // and again once the window has passed: heard
+  b.y = WORLD.floorY - b.r - 2; b.vy = PHYS.impactSpeed * 4;
+  now.advance(RULES.impactEventMs + 20);
+  tick(g, 1 / 240);
+  assert.equal(g.events.filter((e) => e.type === 'bounce').length, 1, 'audible again');
+});
+
+test('a settling pile does not spray bounce events', () => {
+  const { g, now } = playingGame();
+  for (let i = 0; i < 6; i++) g.bodies.push(makeBody(1 + (i % 3), 50 + i * 45, 200 - i * 15));
+  sim(g, now, 4);
+  const perBody = new Map();
+  for (const e of g.events.filter((e) => e.type === 'bounce')) {
+    perBody.set(e.id, (perBody.get(e.id) || 0) + 1);
+  }
+  // 4 s at a 150 ms floor is ~26 events worst case; anything near that means
+  // the limiter is off. Real settling should be a small handful per fruit.
+  for (const [id, n] of perBody) assert.ok(n <= 12, `body ${id} emitted ${n} bounce events`);
 });
 
 test('two watermelons annihilate: no fruit remains, max points awarded', () => {

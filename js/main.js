@@ -8,6 +8,7 @@ import { WORLD, FRUITS, PHYS, radiusOf } from './constants.js';
 import { makeGame, start, tick, serialize, restore } from './game.js';
 import { makeRenderer } from './render.js';
 import { bindInput } from './input.js';
+import { makeEffects, pushEvent, pruneEffects, resetEffects } from './effects.js';
 import { sfx } from './sfx.js';
 import { makeRng } from './arcade-rng.js';
 
@@ -26,6 +27,8 @@ let saveDirty = false;
 
 const canvas = $('board');
 const R = makeRenderer(canvas);
+// Visual-only, host-owned, never saved — see js/effects.js.
+const fx = makeEffects();
 
 // ── settings snapshot (theme/fontScale/reducedMotion re-render live) ───────
 let settings = { theme: 'light', fontScale: 1, reducedMotion: false };
@@ -87,6 +90,7 @@ function show(screen) {
 }
 
 function beginGame(resumed) {
+  resetEffects(fx);
   if (!resumed) start(g);
   show('game');
   refreshHud();
@@ -142,7 +146,8 @@ const loop = Arcade.loop((deltaMs) => {
     acc -= FIXED;
   }
 
-  // drain events → sfx + hud + persistence
+  // drain events → sfx + juice + hud + persistence
+  const tNow = performance.now();
   let hudStale = false;
   for (const ev of g.events) {
     if (ev.type === 'drop') { sfx('drop', { level: ev.level }); hudStale = true; saveDirty = true; }
@@ -152,6 +157,7 @@ const loop = Arcade.loop((deltaMs) => {
     }
     else if (ev.type === 'annihilate') { sfx('annihilate'); hudStale = true; saveDirty = true; }
     else if (ev.type === 'gameover') { sfx('game-over'); }
+    pushEvent(fx, ev, tNow, settings.reducedMotion);
   }
   const ended = g.events.some((e) => e.type === 'gameover');
   g.events.length = 0;
@@ -164,7 +170,8 @@ const loop = Arcade.loop((deltaMs) => {
     saveTimer = Arcade.session.setTimeout(() => { saveTimer = null; flushSave(); }, 1000);
   }
 
-  R.draw(g, settings, performance.now());
+  pruneEffects(fx, tNow);
+  R.draw(g, settings, tNow, fx);
 });
 let saveTimer = null;
 
@@ -189,7 +196,7 @@ Arcade.onStateReplaced(() => {
 function applyResize() { R.resize(); if (g.state === 'playing') loop.kick(); else drawIdle(); }
 window.addEventListener('resize', applyResize);
 
-function drawIdle() { R.draw(g, settings, performance.now()); }
+function drawIdle() { R.draw(g, settings, performance.now(), fx); }
 
 // ── evolution chart on the menu ────────────────────────────────────────────
 function buildChart() {
@@ -213,6 +220,7 @@ function buildChart() {
 
 // ── boot ───────────────────────────────────────────────────────────────────
 function bootFromState() {
+  resetEffects(fx);
   const rec = Arcade.records.get('high-score');
   best = rec && typeof rec.value === 'number' ? rec.value : 0;
 

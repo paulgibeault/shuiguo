@@ -18,8 +18,22 @@ kebab-case identity rule. Diacritics and hanzi live only in UI strings.
 - Two watermelons annihilate: both vanish, +2048.
 - A fruit whose top sits above the dotted line for a **continuous 3 s** ends
   the game. A just-dropped fruit can't trip it until its first contact.
-- Input locks while the board is live and unlocks on settle (with a 1.5 s cap
-  so a micro-jittering pile can never soft-lock the dropper).
+- Every fruit has its own `bounce` (restitution): a cherry pings, a watermelon
+  thuds. Walls and floor use the fruit's own value, fruit-to-fruit uses the
+  pair average.
+
+## Feel
+
+- Dropping locks input for a flat **450 ms** (`RULES.dropCooldownMs`), not
+  until the pile settles — you can play at roughly 2 drops/second regardless
+  of how busy the board is. Aiming is never locked; the held fruit dims for
+  the cooldown and eases back in.
+- Release drops at the **last aimed x**, so lift-off finger wobble can't
+  shift the shot. Drag ≥80 px down into the bottom quarter (or release off
+  the canvas) to cancel and keep your aim.
+- Merges pop and spray juice, scores float and escalate with the chain, hard
+  landings squash, and the board reddens and trembles as the line closes in —
+  all of it gated off by the launcher's reduced-motion setting.
 
 ## Integration
 
