@@ -184,6 +184,24 @@ export const TUNING = {
   terraceCosts: [0, 500, 1200, 3000, 7500, 18000],  // index 0 is the starter terrace
   plotsPerTerrace: 4,
   treePlotsPerTerrace: 1,      // one of the four takes a tree/vine; the rest are beds
+  // ── the merchant's curve ────────────────────────────────────────────────
+  // What a MERGE fetches at market, as a multiple of the fruit's face value.
+  // Campaign only: FRUITS[].score is the arcade table and stays arcade pride.
+  //
+  // The problem it fixes: a pear built from scratch banked ~126元 of cumulative
+  // merge score against 64元 of face value, so merging roughly doubled a fruit's
+  // worth while the effort curve to reach it was far steeper. Small fruit
+  // therefore pay face — merging two cherries is not a feat — and the premium
+  // opens up from the dekopon so that deep merging is what a market day is FOR.
+  //
+  // One entry per level, monotonically non-decreasing (pinned by
+  // tests/economy). Fruit left unmerged on the counter never sees any of this:
+  // it sells at face, which is the whole point of the premium.
+  tierPremium: [1, 1, 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5],
+  // …and what a combo adds on top, per link past the first. A 4-chain pays
+  // ×1.45. Deliberately a bonus rather than the main course: chains are luck
+  // steered by skill, and the tier table is the part the player chooses.
+  chainBonus: 0.15,
   tidyBonus: 0.10,             // packed / sold-out: fraction of the subtotal
   seedDripChance: 0.15,        // 0 disables the drip exactly — no epsilon
   firstUnlockSeeds: 2,         // free packet when a level is first merged in campaign

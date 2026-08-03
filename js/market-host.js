@@ -24,7 +24,7 @@ import {
   drawFromCrate, crateSize, levelsIn, countOf, makeRunTally, noteMerges, rollSeedDrip,
   finishFirstRun, earn, canGoToMarket,
 } from './campaign.js';
-import { appraise, tidyBonusPercent } from './economy.js';
+import { appraise, tidyBonusPercent, mergeValue, annihilateValue } from './economy.js';
 import { paintChip } from './chips.js';
 import { sfx } from './sfx.js';
 
@@ -51,6 +51,11 @@ export function makeMarketHost({ canvas, router, save, getSettings, rng, loop, s
 
   let g = null;
   let tally = makeRunTally();
+  // The till, in 元, as opposed to `g.score`, which stays the engine's own
+  // arcade counter and is simulation state rather than money. Every 元 in here
+  // came out of js/economy.js — this host adds them up and does nothing else
+  // with them.
+  let runEarnings = 0;
   let saveDirty = false;
   let saveTimer = null;
   let soldOutAt = null;
@@ -78,6 +83,7 @@ export function makeMarketHost({ canvas, router, save, getSettings, rng, loop, s
     ensureGame();
     resetEffects(fx);
     tally = makeRunTally();
+    runEarnings = 0;
     soldOutAt = null;
     wasInDanger = false;
     start(g);
@@ -97,6 +103,7 @@ export function makeMarketHost({ canvas, router, save, getSettings, rng, loop, s
     resetEffects(fx);
     if (!restore(g, raw.board)) { save.clearMarket(); return false; }
     tally = restoreTally(raw.tally);
+    runEarnings = restoreEarnings(raw.earnings);
     soldOutAt = null;
     wasInDanger = inDanger(g);
     return true;
@@ -121,6 +128,15 @@ export function makeMarketHost({ canvas, router, save, getSettings, rng, loop, s
     return t;
   }
 
+  // The till out of a save. Hostile-save discipline as everywhere: anything we
+  // cannot believe is 0, which means a doctored save resumes with the board
+  // intact and the earnings of the part of the run it can prove — none. That is
+  // stingy rather than generous, and deliberately so: this is the one field in
+  // the campaign where believing a save would be minting money.
+  function restoreEarnings(raw) {
+    return Number.isInteger(raw) && raw >= 0 ? raw : 0;
+  }
+
   function packTally() {
     const out = { unlockedThisRun: tally.unlockedThisRun.slice(), dripEligible: {} };
     for (const level of levelsIn(tally.dripEligible)) out.dripEligible[level] = countOf(tally.dripEligible, level);
@@ -129,7 +145,7 @@ export function makeMarketHost({ canvas, router, save, getSettings, rng, loop, s
 
   function flushBoard() {
     if (!g || g.state !== 'playing') return;
-    save.writeMarket({ v: 1, board: serialize(g), tally: packTally() });
+    save.writeMarket({ v: 1, board: serialize(g), tally: packTally(), earnings: runEarnings });
     saveDirty = false;
   }
 
@@ -137,7 +153,7 @@ export function makeMarketHost({ canvas, router, save, getSettings, rng, loop, s
 
   function refreshHud() {
     if (!g) return;
-    $('m-score').textContent = String(g.score);
+    $('m-score').textContent = String(runEarnings);
     const label = $('m-next-label');
     if (g.next == null) {
       label.textContent = crateSize(save.get()) > 0 ? '' : 'Sold out 卖完了';
@@ -157,7 +173,7 @@ export function makeMarketHost({ canvas, router, save, getSettings, rng, loop, s
   // worth nothing yet advertises nothing.
   function refreshPackUp() {
     const earned = appraise({
-      score: g.score,
+      earnings: runEarnings,
       boardLevels: g.bodies.map((b) => b.level),
       reason: 'packed',
     }).tidyBonus;
@@ -210,8 +226,13 @@ export function makeMarketHost({ canvas, router, save, getSettings, rng, loop, s
       else if (ev.type === 'merge') {
         sfx(ev.level === MAX_LEVEL ? 'watermelon' : 'merge', { level: ev.level });
         if (ev.chain > 1) sfx('chain', { chain: ev.chain });
+        runEarnings += mergeValue(ev.level, ev.chain);
         hudStale = true; saveDirty = true;
-      } else if (ev.type === 'annihilate') { sfx('annihilate'); hudStale = true; saveDirty = true; }
+      } else if (ev.type === 'annihilate') {
+        sfx('annihilate');
+        runEarnings += annihilateValue(ev.chain);
+        hudStale = true; saveDirty = true;
+      }
       else if (ev.type === 'gameover') { ended = ev.reason || 'toppled'; }
       pushEvent(fx, ev, tNow, settings.reducedMotion);
     }
@@ -261,7 +282,7 @@ export function makeMarketHost({ canvas, router, save, getSettings, rng, loop, s
     const c = save.get();
     const isFirstRun = c.phase === 'gift-run';
     const bill = appraise({
-      score: g.score,
+      earnings: runEarnings,
       boardLevels: g.bodies.map((b) => b.level),
       reason,
       isFirstRun,
@@ -275,10 +296,11 @@ export function makeMarketHost({ canvas, router, save, getSettings, rng, loop, s
     save.touch();
     save.flush();
 
-    if (g.score > 0) {
-      // The campaign's own lane: score is still arcade pride, it just does not
-      // compete with free play's board.
-      Arcade.scores.add('campaign', { score: g.score });
+    if (runEarnings > 0) {
+      // The campaign's own lane, and it posts 元. That lane has always been
+      // campaign-scoped, and 元 is the campaign's number — a market day is
+      // measured in takings, not in arcade points nobody can spend.
+      Arcade.scores.add('campaign', { score: runEarnings });
     }
     Arcade.stats.update('farm', (prev) => {
       const p = prev || {};
@@ -302,7 +324,7 @@ export function makeMarketHost({ canvas, router, save, getSettings, rng, loop, s
     dl.textContent = '';
     $('appraisal-total').textContent = '0';
 
-    const lines = [['Merges 合并', bill.runScore]];
+    const lines = [['Merges 合并', bill.runEarnings]];
     if (bill.boardValue > 0) lines.push(['On the counter 摊上', bill.boardValue]);
     if (bill.tidyBonus > 0) lines.push(['Tidy stall 收摊整齐', bill.tidyBonus]);
     if (bill.floorTopUp > 0) lines.push(['A good start 开门红', bill.floorTopUp]);

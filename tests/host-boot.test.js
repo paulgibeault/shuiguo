@@ -13,7 +13,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { bootGame } from './fake-dom.js';
-import { TUNING, RULES } from '../js/constants.js';
+import { TUNING, RULES, scoreOf } from '../js/constants.js';
 import { FREE_PLAY_KEYS, CAMPAIGN_KEYS, CAMPAIGN_KEY, MARKET_KEY } from '../js/campaign-save.js';
 import { makeCampaign, finishFirstRun, buyFarm, harvestInto, noteMerges, makeRunTally, serialize as packCampaign } from '../js/campaign.js';
 
@@ -83,12 +83,71 @@ test('a mid-drop campaign run outranks everything and resumes into the market', 
   const { $ } = await bootGame({
     state: {
       [CAMPAIGN_KEY]: packCampaign(c),
-      [MARKET_KEY]: { v: 1, board, tally: { unlockedThisRun: [3], dripEligible: { 3: 4 } } },
+      [MARKET_KEY]: { v: 1, board, tally: { unlockedThisRun: [3], dripEligible: { 3: 4 } }, earnings: 640 },
       save: { v: 1, score: 5, current: 1, next: 1, fruits: [], rngState: 1 },
     },
   });
   assert.equal(screen($), 'market', 'someone mid-drop was sent somewhere else');
-  assert.equal($('m-score').textContent, '12');
+  assert.equal($('m-score').textContent, '640', 'the till the run had banked did not come back');
+});
+
+// The till is the one field in the campaign where believing a save would be
+// minting money, so it is the one field that is disbelieved by default. A save
+// written before it existed — or doctored after — resumes with the board intact
+// and the earnings it can prove, which is none.
+test('a market save cannot mint a till out of nothing', async () => {
+  const board = { v: 1, score: 12, current: 11, next: null, fruits: [[9, 100, 400]], rngState: 3 };
+  for (const earnings of [undefined, -50, 1.5, 1e9 + 0.5, 'lots', null, NaN, {}]) {
+    const c = makeCampaign();
+    const { $ } = await bootGame({
+      state: {
+        [CAMPAIGN_KEY]: packCampaign(c),
+        [MARKET_KEY]: { v: 1, board, tally: {}, earnings },
+      },
+    });
+    assert.equal(screen($), 'market');
+    assert.equal($('m-score').textContent, '0',
+      `earnings ${JSON.stringify(earnings)} was believed`);
+  }
+});
+
+// A market board that merges itself on the very first tick: two pears sitting
+// inside each other's radius. Every test that needs a real 元 figure out of the
+// host uses this rather than trying to drop and aim its way into a merge.
+const MERGING_PEARS = { v: 1, score: 0, current: 7, next: 7, fruits: [[7, 130, 490], [7, 230, 490]], rngState: 3 };
+
+async function resumedMarket(state = {}) {
+  const c = makeCampaign();
+  finishFirstRun(c, TUNING.firstRunFloor * 4);
+  buyFarm(c, Date.now());
+  return bootGame({
+    settings: { reducedMotion: true },
+    state: {
+      [CAMPAIGN_KEY]: packCampaign(c),
+      [MARKET_KEY]: { v: 1, board: MERGING_PEARS, tally: {}, earnings: 0 },
+      ...state,
+    },
+  });
+}
+
+// The HUD counts the day up and the appraisal itemizes it, and they are the
+// same arithmetic asked twice. If they can ever disagree, the player watched a
+// number assemble that the receipt then denies.
+test('the 元 on the HUD at pack-up is exactly the appraisal\'s Merges line', async () => {
+  const { $, arcade } = await resumedMarket();
+  assert.equal(screen($), 'market');
+  arcade.tick(2);
+  const onHud = Number($('m-score').textContent);
+  assert.ok(onHud > 0, 'a merge banked nothing at all');
+  // the merchant's premium, not the arcade score: a peach is worth 128 there
+  assert.ok(onHud > scoreOf(8), `a peach merge paid ${onHud} against ${scoreOf(8)} face`);
+
+  $('pack-up').fire('click');
+  arcade.tick(1);
+  assert.equal(screen($), 'appraisal');
+  const merges = [...$('appraisal-lines').children].find((r) => r.textContent.includes('Merges'));
+  assert.ok(merges, 'the appraisal itemized no merges');
+  assert.equal(merges.textContent, `Merges 合并+${onHud}`, 'the receipt disagrees with the HUD');
 });
 
 test('playing free play writes free play keys and NOT ONE campaign key', async () => {

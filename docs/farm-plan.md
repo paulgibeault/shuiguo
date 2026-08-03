@@ -172,21 +172,30 @@ inherently risky, which is the intended self-balancing.
 ### 3.2 Appraisal (WP1)
 
 ```
-appraise({ score, boardLevels, reason, isFirstRun }) → {
-  runScore,                       // score earned by merging during the run
-  boardValue,                     // Σ scoreOf(level) over fruit left on board
+mergeValue(level, chain) → 元 for one merge:
+  round(scoreOf(level) × TUNING.tierPremium[level−1] × (1 + TUNING.chainBonus × (chain−1)))
+annihilateValue(chain) → the same, off ANNIHILATE_SCORE and the top premium
+
+appraise({ earnings, boardLevels, reason, isFirstRun }) → {
+  runEarnings,                    // 元 banked by merges during the run (Σ mergeValue)
+  boardValue,                     // Σ scoreOf(level) over fruit left on board — FACE value
   tidyBonus,                      // reason packed/sold-out: round(subtotal × TUNING.tidyBonus)
   floorTopUp,                     // isFirstRun: max(0, TUNING.firstRunFloor − total)
-  total                           // cash granted, 1 score-point = 1 元
+  total                           // cash granted
 }
 ```
 
-Deep merging is intrinsically the high-paying play (a from-scratch watermelon
-banked 1+2+…+1024 on the way up), while an unmerged board still sells at face
-value — no fruit is ever wasted, including annihilations (they paid 2048 as
-score). The appraisal sheet itemizes these lines visually (coins flying from
-each board fruit, then the bonus stamp) — that UI is WP7; WP1 is just the
-math.
+Deep merging is the high-paying play by construction: the tier premium opens up
+from the dekopon so a watermelon merge fetches ~5× its face value, while fruit
+left unmerged on the counter sells at face and earns none of it. That asymmetry
+is the point — WP-G (#14) added it because a pear built from scratch banked only
+~2× its face value against a far steeper effort curve. No fruit is ever wasted
+either way, including annihilations. The appraisal sheet itemizes these lines
+visually (coins flying from each board fruit, then the bonus stamp) — that UI is
+WP7; WP1 is just the math.
+
+Campaign only. `FRUITS[].score` stays the arcade table: free play's score,
+records and discovery-card `+N` are arcade pride and buy nothing.
 
 ### 3.3 Farm simulation (WP2)
 
@@ -428,7 +437,7 @@ nothing to hand-maintain).
   Pack Up button, sold-out auto-finish, held-fruit scaled-to-fit rendering
   for levels ≥ 7 (§3.1), mid-run `market-save` (board + crate + run-seed
   tally) with the same debounce/suspend discipline as free play.
-- Appraisal sheet: itemized lines landing one by one (runScore, board coins
+- Appraisal sheet: itemized lines landing one by one (runEarnings, board coins
   flying off each fruit into the till, tidy stamp, seed-drip "found in the
   till" packets, first-run floor as a quiet top-up line), total counts up
   with the coin sfx. Then: cash committed to campaign state, scores lane

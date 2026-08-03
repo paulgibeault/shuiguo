@@ -4,11 +4,15 @@
 // DOM. The hosts do the arithmetic nowhere: if a number in the campaign came
 // from adding or multiplying anything, it came from here.
 //
-// One currency (元) and one exchange rate: 1 score point = 1 元. Score and cash
-// never convert the other way — the free-play leaderboard is arcade pride and
-// stays out of the economy entirely.
+// One currency (元). A fruit's FACE value is its arcade score at 1:1 — that is
+// what it fetches sitting unmerged on the counter — but a merge is priced by
+// the merchant's curve below and fetches considerably more. Cash never converts
+// back into score: the free-play leaderboard is arcade pride and stays out of
+// the economy entirely.
 
-import { TUNING, MAX_LEVEL, MAX_TERRACES, scoreOf, seedCostOf } from './constants.js';
+import {
+  TUNING, MAX_LEVEL, MAX_TERRACES, ANNIHILATE_SCORE, scoreOf, seedCostOf,
+} from './constants.js';
 
 // Endings that count as putting the stall away neatly. Topping out is never
 // punished beyond ending the run (design pillar: every ending is a sale), but
@@ -24,35 +28,76 @@ export function isTidy(reason) { return TIDY_REASONS.has(reason); }
 // never quote different percentages.
 export function tidyBonusPercent() { return Math.round(TUNING.tidyBonus * 100); }
 
+// ── the merchant's curve ───────────────────────────────────────────────────
+//
+// What one merge is WORTH to a merchant, as opposed to what it scores on an
+// arcade board. The two are different questions and this is the only place the
+// first one is answered: hosts add up what comes out of here and nothing else.
+//
+// Free play never calls any of it. FRUITS[].score stays the arcade table, and
+// a free-play run's score is pride that buys nothing.
+
+// A level's multiple of face value. Out-of-range levels price at face rather
+// than throwing: a premium is a bonus, and the fallback for "I don't know this
+// fruit" is to pay for it honestly.
+export function tierPremium(level) {
+  const p = TUNING.tierPremium[level - 1];
+  return typeof p === 'number' && isFinite(p) && p > 0 ? p : 1;
+}
+
+// What a combo of `chain` merges multiplies the last of them by. A 1-chain is
+// the absence of a combo and multiplies by exactly 1 — no epsilon, so a knob of
+// 0 disables the whole idea cleanly.
+export function chainMultiplier(chain) {
+  const n = Number.isFinite(chain) && chain >= 1 ? Math.floor(chain) : 1;
+  return 1 + TUNING.chainBonus * (n - 1);
+}
+
+// One merge, in 元. This is the number the float says (js/market-host.js) and
+// the number the till counts, which is why there is one function and not two.
+export function mergeValue(level, chain = 1) {
+  if (!Number.isInteger(level) || level < 1 || level > MAX_LEVEL) return 0;
+  return Math.round(scoreOf(level) * tierPremium(level) * chainMultiplier(chain));
+}
+
+// Two watermelons, in 元. Priced off the top of the tier table so the ultimate
+// merge can never pay worse than the merge below it — pinned by tests/economy,
+// because "the biggest thing the board can do is a sacrifice" would be a bug
+// nobody reports and everybody feels.
+export function annihilateValue(chain = 1) {
+  return Math.round(ANNIHILATE_SCORE * tierPremium(MAX_LEVEL) * chainMultiplier(chain));
+}
+
 // The appraisal, itemized. The sheet in js/market-host.js lands these lines one
 // at a time — coins off each fruit, then the stamp — so every number the player
 // watches arrive has its own field here rather than being backed out of a total.
 //
-//   score        merge score earned during the run (g.score)
+//   earnings     元 banked by merges during the run, per mergeValue above
 //   boardLevels  the levels still sitting on the counter when the run ended
 //   reason       'toppled' | 'packed' | 'sold-out'
 //   isFirstRun   the gift run, which is floored so the farm is always affordable
 //
-// Deep merging is intrinsically the high-paying play — a watermelon built from
-// scratch banked 1+2+…+1024 on the way up — while an unmerged board still sells
-// at face value. No fruit is ever wasted, including annihilated ones: they paid
-// ANNIHILATE_SCORE as score on the way out.
-export function appraise({ score = 0, boardLevels = [], reason = 'toppled', isFirstRun = false } = {}) {
-  const runScore = Math.max(0, Math.floor(score) || 0);
+// Deep merging is the high-paying play by construction — that is what the tier
+// premium buys — while an unmerged board sells at FACE value and earns none of
+// it. That asymmetry is the point: fruit you never merged did not earn a
+// merchant's price. Nothing is wasted either way, including annihilated fruit,
+// which paid on the way out.
+export function appraise({ earnings = 0, boardLevels = [], reason = 'toppled', isFirstRun = false } = {}) {
+  const runEarnings = Math.max(0, Math.floor(earnings) || 0);
 
   let boardValue = 0;
   for (const level of boardLevels) {
     if (Number.isInteger(level) && level >= 1 && level <= MAX_LEVEL) boardValue += scoreOf(level);
   }
 
-  const subtotal = runScore + boardValue;
+  const subtotal = runEarnings + boardValue;
   const tidyBonus = isTidy(reason) ? Math.round(subtotal * TUNING.tidyBonus) : 0;
   // The floor is a top-up, never a cap: a good first run keeps everything it
   // earned and simply sees no top-up line at all.
   const beforeFloor = subtotal + tidyBonus;
   const floorTopUp = isFirstRun ? Math.max(0, TUNING.firstRunFloor - beforeFloor) : 0;
 
-  return { runScore, boardValue, tidyBonus, floorTopUp, total: beforeFloor + floorTopUp };
+  return { runEarnings, boardValue, tidyBonus, floorTopUp, total: beforeFloor + floorTopUp };
 }
 
 // ── prices ─────────────────────────────────────────────────────────────────
