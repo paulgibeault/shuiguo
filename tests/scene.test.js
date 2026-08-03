@@ -5,10 +5,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  SCENE, THEMES, themeOf,
+  SCENE, THEMES, PERCH_R, perchAt, themeOf,
   paintSky, paintSkyline, paintStall, paintAwning, paintLanterns, paintLeaf,
 } from '../js/scene.js';
-import { WORLD } from '../js/constants.js';
+import { WORLD, radiusOf } from '../js/constants.js';
 
 function stubCtx() {
   const calls = [];
@@ -118,4 +118,27 @@ test('lantern sway is imperceptible, and stops entirely under reduced motion', (
   assert.deepEqual(a.calls, b.calls);
   const c = stubCtx(); paintLanterns(c, THEMES.dark, 0, 1);
   assert.ok(c.calls.length > 0);
+});
+
+// ── the perch ──────────────────────────────────────────────────────────────
+// Where a friend sits while they watch you work. The rule is that it is not
+// the board: everything between the walls is where fruit land, so the one
+// honest seat on this stall is the top of a side plank.
+
+test('the perch is on the plank, not on the board, and inside the view', () => {
+  const r = PERCH_R;
+  const p = perchAt(r);
+  // the plank top, which is where paintStall starts the side walls
+  assert.equal(p.y + r, WORLD.deadlineY - 20, 'the friend is not sitting on anything');
+  // the view is the world plus one plank on each side and nothing more, so a
+  // friend who reaches past that is drawn with a slice missing
+  assert.ok(p.x - r >= -SCENE.wall, `the friend is clipped by the bezel at ${p.x - r}`);
+  assert.ok(p.x + r < WORLD.width / 4, 'the friend is sitting out on the counter');
+  // and clear of the pile: a fruit resting on the floor can never reach them
+  assert.ok(p.y + r < WORLD.deadlineY, 'the perch is inside the danger zone');
+});
+
+test('a perched friend is small — a little wider than the plank, not a fruit in play', () => {
+  assert.ok(PERCH_R > SCENE.wall, 'the friend is narrower than the plank they sit on');
+  assert.ok(PERCH_R < radiusOf(2), 'the friend is drawn at full fruit size');
 });

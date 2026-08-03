@@ -100,6 +100,18 @@ export function appraise({ earnings = 0, boardLevels = [], reason = 'toppled', i
   return { runEarnings, boardValue, tidyBonus, floorTopUp, total: beforeFloor + floorTopUp };
 }
 
+// The friend's split of a stall you minded for them, in 元.
+//
+// Arcade score at 1:1, and the merchant's curve above deliberately does not
+// apply: a friend's stall is an arcade board, and its score is arcade score.
+// The cut then keeps a fraction of that, which is what makes minding a stall
+// the fallback activity rather than the optimum — the answer to an empty crate
+// and nothing ripening, not a replacement for a market day.
+export function friendCut(score) {
+  const earned = Math.max(0, Math.floor(score) || 0);
+  return Math.floor(earned * TUNING.friendCut);
+}
+
 // ── prices ─────────────────────────────────────────────────────────────────
 // Every shop row reads its number through one of these, so a price exists in
 // exactly one place (constants.js) and the shop can never quote one figure and

@@ -10,7 +10,7 @@
 // itself is UNCHANGED — same save key, same score lane, same records, same
 // rules — and pinned that way by tests/free-play-isolation.
 
-import { FRUITS, MAX_LEVEL, PHYS } from './constants.js';
+import { FRUITS, MAX_LEVEL, PHYS, FRIEND_LEVEL } from './constants.js';
 import { makeGame, start, tick, serialize, restore, inDanger } from './game.js';
 import { makeRenderer } from './render.js';
 import { bindInput } from './input.js';
@@ -22,7 +22,8 @@ import { sfx } from './sfx.js';
 import { makeRng } from './arcade-rng.js';
 import { paintChip } from './chips.js';
 import { makeRouter } from './mode.js';
-import { chainMultiplier } from './economy.js';
+import { chainMultiplier, friendCut } from './economy.js';
+import { earn } from './campaign.js';
 import { multiplier } from './format.js';
 import { makeCampaignSave, bootScreen } from './campaign-save.js';
 import { makeFarmHost } from './farm-host.js';
@@ -56,6 +57,10 @@ let wasInDanger = false;
 
 const canvas = $('board');
 const R = makeRenderer(canvas);
+// This board is somebody's stall, and they sit on the plank and watch you work
+// it. Set once: this renderer only ever draws free play (the market has its
+// own), so there is no state to keep in step.
+R.setPerch(FRIEND_LEVEL);
 // Visual-only, host-owned, never saved — see js/effects.js.
 const fx = makeEffects();
 
@@ -326,6 +331,7 @@ function endGame() {
   $('new-best').hidden = !isBest;
   show('over');
   fillSummary();
+  paySplit();
 
   // records/scores/stats — all fire-and-forget
   if (g.score > 0) {
@@ -393,6 +399,30 @@ function fillSummary() {
   }
 }
 
+// ── the friend's split ─────────────────────────────────────────────────────
+// You minded 草莓's stall; at close they split the till with you, into the
+// campaign. It is the one thing this mode is allowed to write into the
+// campaign, and CASH IS ALL OF IT — no seeds, no unlocks, no crate, no farm, no
+// phase change. Seed unlocks stay campaign-merge-only (js/campaign.js
+// §noteMerges is never called from here), which is what keeps a lucky evening
+// on a friend's stall from skipping the whole progression.
+//
+// No farm means no split: there is nowhere for the money to go, and a player
+// who has never opened the campaign sees the game-over sheet they always saw
+// and writes not one campaign byte.
+function paySplit() {
+  const line = $('friend-cut');
+  const c = campaignSave.get();
+  const cut = c.phase === 'open' ? friendCut(g.score) : 0;
+  if (cut <= 0) { line.hidden = true; line.textContent = ''; return; }
+  earn(c, cut);
+  campaignSave.touch();
+  campaignSave.flush();
+  const f = FRUITS[FRIEND_LEVEL - 1];
+  line.textContent = `${f.hanzi} splits the till 分成 +${cut}元`;
+  line.hidden = false;
+}
+
 // ── save plumbing ──────────────────────────────────────────────────────────
 function flushSave() {
   if (g.state === 'playing') {
@@ -435,7 +465,7 @@ const loop = Arcade.loop((deltaMs) => {
   // time ever. Both are read from the batch as a whole (js/progress.js), which
   // is why they live outside the per-event loop.
   const chain = deepestChain(g.events);
-  if (chain >= 3) showChainBanner(chain);
+  if (chain >= 3) { showChainBanner(chain); R.cheer(tNow); }
   const found = newDiscoveries(discovered, g.events);
   if (found.length) { commitDiscovered(found); queueDiscoveryCards(found); }
 

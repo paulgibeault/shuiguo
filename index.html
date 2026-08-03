@@ -75,15 +75,18 @@
       <button id="play-campaign" class="big" type="button">
         Campaign 经营 <span id="campaign-badge" class="badge" hidden>🌱</span>
       </button>
-      <button id="play-free" type="button">Free play 自由</button>
-      <p class="hint">Campaign: grow the fruit you drop, on a terraced farm in the mountains. Free play: the endless stall.</p>
+      <!-- Not "free play" any more: the endless stall belongs to somebody, and
+           minding it for them is why they pay you a share at close. Same id,
+           same save keys, same records — this is paint, not plumbing. -->
+      <button id="play-free" type="button">Mind 草莓's stall 帮草莓看摊</button>
+      <p class="hint">Campaign: grow the fruit you drop, on a terraced farm in the mountains. 草莓 splits the day's till with you.</p>
     </section>
 
     <section id="menu" class="sheet" hidden>
       <h1 class="sign"><span class="sign-hanzi">水果摊</span><span class="sign-name">shuǐ guǒ tān</span></h1>
-      <p class="tagline">Drop fruit. Match pairs. Grow the watermelon 西瓜.</p>
+      <p class="tagline">Mind the stall. Match pairs. Grow the watermelon 西瓜.</p>
       <div id="chart" class="chart" aria-label="Fruit evolution chain"></div>
-      <button id="play" class="big" type="button">Play 玩</button>
+      <button id="play" class="big" type="button">Mind the stall 看摊</button>
       <button id="menu-to-mode" type="button">Back</button>
       <p class="hint">Slide to aim · release to drop · two of a kind merge into the next fruit · don't cross the line</p>
     </section>
@@ -107,6 +110,11 @@
         </figure>
         <dl id="over-stats" class="stat-grid"></dl>
       </div>
+
+      <!-- The friend's share of the till, paid into the campaign — one line in
+           the discovery-card/appraisal register, never a dialog. Absent for a
+           player who has no farm for it to go into. -->
+      <p id="friend-cut" class="receipt" hidden></p>
 
       <button id="again" class="big" type="button">Again 再来</button>
       <button id="to-menu" type="button">Menu</button>

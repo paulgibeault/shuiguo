@@ -65,6 +65,16 @@ export const FACES = [
   { eye: 0.11, gap: 0.44, eyeY: -0.15, lid: 0.12, mouth: 0.20, mouthY: 0.16, blush: 0.10 }, // watermelon — stoic
 ];
 
+// The friend whose stall you mind when you are not running your own: 草莓 the
+// strawberry, the starter crop and the cheerful wide-eyed face in FACES the
+// player has known since minute one.
+//
+// The campaign pillar — no named characters, no dialog — stands: the friend is
+// a FRUIT, so they need no new art, no new name and no words beyond a button
+// and one line on the receipt. Their name, their face and their portrait all
+// come out of the tables above.
+export const FRIEND_LEVEL = 2;
+
 export const MAX_LEVEL = FRUITS.length;               // 11
 export const MAX_SPAWN_LEVEL = 5;                     // only 1..5 drop randomly
 // Two watermelons annihilate — the ultimate merge. Continue the doubling.
@@ -202,6 +212,12 @@ export const TUNING = {
   // ×1.45. Deliberately a bonus rather than the main course: chains are luck
   // steered by skill, and the tier table is the part the player chooses.
   chainBonus: 0.15,
+  // The friend's cut of a stall you minded for them (js/economy.js §friendCut).
+  // Deliberately well below a real market day's takings: minding a stall is the
+  // fallback activity for when the crate is empty and nothing is ripe, not the
+  // optimum. It is paid on arcade SCORE at 1:1 — the friend's stall is an
+  // arcade board and the merchant's curve is not theirs to charge.
+  friendCut: 0.2,
   tidyBonus: 0.10,             // packed / sold-out: fraction of the subtotal
   seedDripChance: 0.15,        // 0 disables the drip exactly — no epsilon
   firstUnlockSeeds: 2,         // free packet when a level is first merged in campaign

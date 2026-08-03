@@ -55,6 +55,30 @@ export function themeOf(settings) {
   return THEMES[settings && settings.theme === 'dark' ? 'dark' : 'light'];
 }
 
+// Where a friend sits while they watch you work.
+//
+// The top of the left-hand plank is the one flat surface on this stall that is
+// not the board: everything between the walls is where fruit land, and the
+// counter is the bottom of the pile. Small — a little wider than the plank it
+// sits on, so it reads as perched rather than as something that fell in — and
+// tucked under the near corner of the awning, which is exactly where you would
+// sit if you were minding a stall and not working it.
+//
+// It lives here because it is scene geometry: the plank's top is
+// `WORLD.deadlineY - 20` in paintStall and the host has no business knowing
+// that. Returns the fruit's CENTRE, so a painter can use it directly.
+export function perchAt(r) {
+  return { x: SCENE.wall * 0.9, y: WORLD.deadlineY - 20 - r };
+}
+
+// How big a perched friend is drawn, in world units. Sized off the plank
+// rather than off the fruit's own radius, so every friend in the cast perches
+// at the same scale whatever they are — and small enough that at this x the
+// whole of them stays inside the view, which ends one plank past the wall.
+// tests/scene pins that; a friend clipped in half by the bezel is the bug this
+// number exists to not have.
+export const PERCH_R = SCENE.wall * 1.8;
+
 // ── precomputed static geometry ────────────────────────────────────────────
 
 function lcg(seed) {

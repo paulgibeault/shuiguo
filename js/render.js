@@ -17,7 +17,8 @@ import { inDanger } from './game.js';
 import { dropletAt, floatAt, popScale, squashAmount } from './effects.js';
 import { paintFruit, expressionFor } from './fruit-art.js';
 import {
-  SCENE, themeOf, paintSky, paintSkyline, paintStall, paintAwning, paintLanterns, paintLeaf,
+  SCENE, PERCH_R, perchAt, themeOf,
+  paintSky, paintSkyline, paintStall, paintAwning, paintLanterns, paintLeaf,
 } from './scene.js';
 
 const EMPTY_FX = { droplets: [], floats: [], pops: new Map(), squashes: new Map() };
@@ -30,9 +31,25 @@ const CRATED_R = WORLD.dropperY;
 const TREMBLE_MS = 1000;
 const TREMBLE_MAX = 1;          // world units — deliberately barely-there
 
+// How long a perched fruit wears its pleased face after being cheered. Longer
+// than a newborn's ART.happyMs, because a newborn is a flash and this is
+// somebody reacting to something you did.
+const PERCH_CHEER_MS = 1200;
+
+// A perched fruit is scenery, not a body, but the blink machinery keys off an
+// id — so it gets a fixed synthetic one. Fixed, so its blinks are the same
+// every session; distinctive, so it never shares a phase with a real body.
+const PERCH_ID = 0x9e3779b9;
+
 export function makeRenderer(canvas) {
   const ctx = canvas.getContext('2d');
   let scale = 1, offX = 0, offY = 0;
+  // Who, if anyone, is sitting on the plank watching. HOST CONFIGURATION, not
+  // a mode: this file has no idea what a friend or a campaign is, only that it
+  // has been asked to draw a fruit on the scene's perch. Null draws nothing,
+  // which is every board that has nobody minding it.
+  let perchLevel = null;
+  let cheeredAt = null;
 
   // The view is fitted to the world PLUS the stall's side planks, which live
   // just outside it (x < 0 and x > WORLD.width). Fitting the bare world hid
@@ -72,6 +89,9 @@ export function makeRenderer(canvas) {
     paintAwning(ctx, th);
     paintLanterns(ctx, th, tMs, motion);
     paintLeaf(ctx, th, tMs, motion);
+    // In FRONT of the awning it is tucked under, behind every fruit — scenery
+    // with a face, never something the pile can land on.
+    drawPerched(tMs, settings.reducedMotion);
 
     drawDeadline(g, th, tMs, motion);
     if (g.state === 'playing' && g.current != null) drawGhost(g, th);
@@ -112,6 +132,26 @@ export function makeRenderer(canvas) {
     }
 
     drawVignette(overMs);
+  }
+
+  // Whoever is minding the stall, on the perch js/scene.js picked. THE
+  // ONE-PAINTER RULE: this is paintFruit like every other fruit in the game,
+  // at the perch's scale, wearing an expression out of expressionFor's own
+  // vocabulary — no second drawing of anything.
+  //
+  // Under reduced motion they are simply present and neutral: expressionFor
+  // already refuses to blink, and the cheer is suppressed here because a face
+  // that changes is motion however briefly it lasts.
+  function drawPerched(tMs, reducedMotion) {
+    if (perchLevel == null) return;
+    const p = perchAt(PERCH_R);
+    const cheering = !reducedMotion && cheeredAt != null && tMs - cheeredAt < PERCH_CHEER_MS;
+    ctx.save();
+    ctx.translate(p.x, p.y);
+    paintFruit(ctx, perchLevel, PERCH_R, {
+      expression: cheering ? 'happy' : expressionFor({ id: PERCH_ID }, tMs, reducedMotion),
+    });
+    ctx.restore();
   }
 
   // One body: the caller's pop/squash transform, then the shared painter.
@@ -261,7 +301,13 @@ export function makeRenderer(canvas) {
     ctx.fillRect(0, 0, canvas.width, canvas.height);
   }
 
-  return { resize, draw, toWorldX };
+  return {
+    resize, draw, toWorldX,
+    // Who is watching, and a way to make them look pleased. Both are the
+    // host's to decide; neither teaches this file anything about modes.
+    setPerch(level) { perchLevel = level == null ? null : level; cheeredAt = null; },
+    cheer(tMs) { cheeredAt = tMs; },
+  };
 }
 
 // Longest continuous time any fruit has spent over the line, in ms.

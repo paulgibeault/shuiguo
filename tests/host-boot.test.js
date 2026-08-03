@@ -14,20 +14,19 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { bootGame } from './fake-dom.js';
 import { TUNING, RULES, scoreOf } from '../js/constants.js';
-import { mergeValue, chainMultiplier } from '../js/economy.js';
+import { mergeValue, chainMultiplier, friendCut } from '../js/economy.js';
 import { multiplier } from '../js/format.js';
 import { FREE_PLAY_KEYS, CAMPAIGN_KEYS, CAMPAIGN_KEY, MARKET_KEY } from '../js/campaign-save.js';
 import { makeCampaign, finishFirstRun, buyFarm, harvestInto, noteMerges, makeRunTally, serialize as packCampaign } from '../js/campaign.js';
 
 // One drop, cooldown and all. js/game.js locks input for RULES.dropCooldownMs
-// of REAL time (it runs on performance.now()), so a test that only spins the
-// loop gets exactly one fruit however many frames it asks for.
-async function dropAt(booted, x) {
+// on the wall clock, so a test that only spins the loop gets exactly one fruit
+// however many frames it asks for — the frames have to carry the time too, and
+// tests/fake-dom's clock advances with them.
+function dropAt(booted, x) {
   booted.$('board').fire('pointerdown', { clientX: x, clientY: 300 });
   booted.$('board').fire('pointerup', { clientX: x, clientY: 300 });
-  booted.arcade.tick(20);
-  await new Promise((r) => setTimeout(r, RULES.dropCooldownMs + 60));
-  booted.arcade.tick(20);
+  booted.arcade.tick(Math.ceil(RULES.dropCooldownMs / 16) + 4);
 }
 
 // Which sheet is up, by the ids the router owns.
@@ -218,22 +217,119 @@ test('reduced motion still shows what a merge paid', async () => {
   assert.ok(floatsOn($).length > 0, 'reduced motion swallowed the payout');
 });
 
-test('playing free play writes free play keys and NOT ONE campaign key', async () => {
-  const { $, arcade } = await bootGame();
-  $('play-free').fire('click');
-  $('play').fire('click');
-  arcade.tick(3);
-  $('board').fire('pointerdown', { clientX: 120, clientY: 300 });
-  $('board').fire('pointerup', { clientX: 120, clientY: 300 });
-  arcade.tick(90);
+// ── the friend's stall, and the one thing it may write ─────────────────────
+//
+// The isolation promise USED to be "free play writes not one campaign key". It
+// is deliberately narrower now, because a friend's stall pays you a share of
+// the till: the friend's stall may write campaign CASH, and never anything
+// else. No seeds, no unlocks, no crate, no farm mutation, no phase change —
+// which is what keeps a lucky evening on somebody else's stall from skipping
+// the campaign's whole progression. A player with no campaign still writes
+// nothing at all, exactly as before.
+
+test('a player with no campaign minds the stall and writes not one campaign key', async () => {
+  const { $, arcade } = await mindedStall({ campaign: false });
+  finishStall($, arcade);
   arcade.runTimers();
   arcade.fire('suspend');
 
-  assert.ok(arcade.writes.includes('save'), 'free play stopped saving its board');
+  assert.equal(screen($), 'over');
   for (const key of CAMPAIGN_KEYS) {
-    assert.ok(!arcade.writes.includes(key), `free play wrote the campaign's ${key}`);
+    assert.ok(!arcade.writes.includes(key), `a friend's stall wrote the campaign's ${key}`);
   }
-  assert.ok(!arcade.scores.lanes.some((s) => s.lane === 'campaign'), 'free play scored in the campaign lane');
+  assert.ok(!arcade.scores.lanes.some((s) => s.lane === 'campaign'), 'the stall scored in the campaign lane');
+  assert.equal($('friend-cut').textContent, '', 'a player with no farm was paid a split anyway');
+  assert.equal($('friend-cut').hidden, true);
+});
+
+test('minding a stall still saves its own board under its own key', async () => {
+  const { $, arcade } = await mindedStall({ campaign: false });
+  arcade.tick(3);
+  arcade.runTimers();
+  arcade.fire('suspend');
+  assert.ok(arcade.writes.includes('save'), 'free play stopped saving its board');
+});
+
+// A run that ends the only way free play's runs end — a pile already over the
+// line, waiting the deadline out — with a score worth splitting on it. 430 is
+// the worked example from the issue: 草莓's fifth of it is 86元.
+const TOPPLED_STALL = {
+  v: 1, score: 430, current: 1, next: 1, rngState: 5,
+  fruits: [[7, 180, 492.5], [8, 180, 380], [7, 180, 267.5], [8, 180, 155], [7, 180, 42.5]],
+};
+
+async function mindedStall({ campaign = true, score = 430 } = {}) {
+  const state = { save: { ...TOPPLED_STALL, score } };
+  if (campaign) {
+    const c = makeCampaign();
+    finishFirstRun(c, TUNING.firstRunFloor);
+    buyFarm(c, Date.now());
+    state[CAMPAIGN_KEY] = packCampaign(c);
+  }
+  const booted = await bootGame({ settings: { reducedMotion: true }, state });
+  assert.equal(screen(booted.$), 'game', 'the stall never opened');
+  booted.before = booted.arcade.state.get(CAMPAIGN_KEY);
+  return booted;
+}
+
+// Let the deadline claim the pile. One frame to start every fruit's clock, the
+// rule's own three seconds on the wall, one more frame to notice.
+function finishStall($, arcade) {
+  arcade.tick(1);
+  arcade.advance(RULES.overLineMs + 100);
+  arcade.tick(1);
+  assert.equal($('over').hidden, false, 'the pile never reached the line');
+}
+
+test('minding the stall with a farm behind you pays the friend\'s split, and says so', async () => {
+  const { $, arcade, before } = await mindedStall();
+  finishStall($, arcade);
+
+  assert.equal(friendCut(430), 86, 'the worked example moved — check TUNING.friendCut');
+  assert.equal($('friend-cut').hidden, false, 'the friend took their cut without a word');
+  assert.equal($('friend-cut').textContent, '草莓 splits the till 分成 +86元');
+
+  const after = arcade.state.get(CAMPAIGN_KEY);
+  assert.equal(after.cash, before.cash + 86, 'the till did not reach the campaign');
+});
+
+test('the split is CASH and nothing else — not a seed, an unlock, a crate or a farm', async () => {
+  const { $, arcade, before } = await mindedStall();
+  finishStall($, arcade);
+  const after = arcade.state.get(CAMPAIGN_KEY);
+
+  assert.notEqual(after.cash, before.cash, 'nothing was paid at all');
+  for (const field of ['phase', 'firstRunDone']) {
+    assert.equal(after[field], before[field], `the friend's stall changed ${field}`);
+  }
+  // The board is full of pears and peaches — exactly the levels a campaign
+  // merge would have unlocked the right to plant. Minding a friend's stall
+  // must earn none of that: unlocks are campaign-merge-only, and js/campaign.js
+  // §noteMerges is never reached from this path.
+  for (const field of ['seeds', 'unlocked', 'crate', 'farm']) {
+    assert.deepEqual(after[field], before[field], `the friend's stall wrote ${field}`);
+  }
+  assert.ok(!arcade.writes.includes(MARKET_KEY), 'a friend\'s stall left a market board behind');
+  assert.ok(!arcade.scores.lanes.some((s) => s.lane === 'campaign'), 'the split scored in the campaign lane');
+});
+
+test('the split survives a reload, because it is flushed at the moment it is paid', async () => {
+  const { $, arcade } = await mindedStall();
+  finishStall($, arcade);
+  const paid = arcade.state.get(CAMPAIGN_KEY).cash;
+  assert.ok(paid > 0);
+
+  const again = await bootGame({ state: { [CAMPAIGN_KEY]: arcade.state.get(CAMPAIGN_KEY) } });
+  again.$('play-campaign').fire('click');
+  assert.equal(Number(again.$('farm-cash').textContent), paid, 'the friend\'s cut did not survive a reload');
+});
+
+test('a stall minded for nothing pays nothing, and leaves no line saying so', async () => {
+  // 20% of zero is not a receipt line, it is a scold
+  const { $, arcade, before } = await mindedStall({ score: 0 });
+  finishStall($, arcade);
+  assert.equal($('friend-cut').hidden, true, 'a scoreless run got a receipt for 0元');
+  assert.equal(arcade.state.get(CAMPAIGN_KEY).cash, before.cash, 'nothing earned still moved the till');
 });
 
 test('playing the campaign writes campaign keys and NOT ONE free-play key', async () => {
@@ -241,7 +337,7 @@ test('playing the campaign writes campaign keys and NOT ONE free-play key', asyn
   const booted = { $, arcade };
   $('play-campaign').fire('click');
   arcade.tick(3);
-  await dropAt(booted, 120);
+  dropAt(booted, 120);
   arcade.runTimers();
   $('pack-up').fire('click');
   arcade.tick(1);

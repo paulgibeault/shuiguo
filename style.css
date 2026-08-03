@@ -273,6 +273,19 @@ h2 { font-size: 1.8rem; }
 .final strong { font-size: 2rem; color: var(--accent); }
 .new-best { color: var(--accent); font-weight: 700; animation: pop 0.5s ease-out; }
 
+/* The friend's split, on the game-over sheet: a receipt line, in the register
+   the appraisal's ledger and the discovery cards already speak. Quiet — it is
+   a thing that happened, not a thing to celebrate. */
+.receipt {
+  font-size: 0.95rem;
+  font-variant-numeric: tabular-nums;
+  padding: 0.35rem 0.9rem;
+  border-radius: 999px;
+  border: 1px dashed color-mix(in srgb, var(--accent) 45%, transparent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+.receipt[hidden] { display: none; }
+
 @keyframes pop {
   0% { transform: scale(0.6); opacity: 0; }
   100% { transform: scale(1); opacity: 1; }

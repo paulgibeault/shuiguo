@@ -206,6 +206,15 @@ export function makeArcade({ state = {}, stats = {}, records = {}, settings = {}
   const scores = [];
   const store = { ...state };
   const statStore = { ...stats };
+  // The frame clock, and the one performance.now() the booted game sees.
+  //
+  // Every rule in the game that is measured in wall time — the drop cooldown,
+  // the deadline's three seconds, the combo window, the sold-out grace — reads
+  // performance.now(). Against the real one, a test either sleeps for real or
+  // cannot reach the rule at all, and the loop's 16ms deltas disagree with the
+  // clock the same loop's game is checking itself against. So it advances with
+  // the frames instead: one tick is one 16ms frame, in the sim and on the wall.
+  let clock = 0;
 
   const arcade = {
     ready: Promise.resolve(),
@@ -246,7 +255,12 @@ export function makeArcade({ state = {}, stats = {}, records = {}, settings = {}
       timers,
     },
     loop(fn) {
-      const l = { fn, running: false, kicks: 0, start() { l.running = true; }, stop() { l.running = false; }, kick() { l.kicks++; fn(16); } };
+      const l = {
+        fn, running: false, kicks: 0,
+        start() { l.running = true; },
+        stop() { l.running = false; },
+        kick() { l.kicks++; clock += 16; fn(16); },
+      };
       loops.push(l);
       return l;
     },
@@ -258,8 +272,14 @@ export function makeArcade({ state = {}, stats = {}, records = {}, settings = {}
     hooks,
     // test helpers
     fire(which) { for (const fn of hooks[which]) fn(); },
+    now() { return clock; },
+    /** Pass time without drawing a frame — for a rule the player waits out. */
+    advance(ms) { clock += ms; return clock; },
     tick(n = 1) {
-      for (let i = 0; i < n; i++) for (const l of loops) if (l.running) l.fn(16);
+      for (let i = 0; i < n; i++) {
+        clock += 16;
+        for (const l of loops) if (l.running) l.fn(16);
+      }
     },
     runTimers() {
       const due = timers.splice(0, timers.length);
@@ -282,7 +302,7 @@ export async function bootGame(opts = {}) {
   globalThis.document = doc;
   globalThis.window = { devicePixelRatio: 1, addEventListener() {}, Arcade: arcade };
   globalThis.Arcade = arcade;
-  globalThis.performance = globalThis.performance || { now: () => 0 };
+  globalThis.performance = { now: () => arcade.now() };
 
   const url = new URL('../js/main.js', import.meta.url);
   url.searchParams.set('boot', String(bootGame.n = (bootGame.n || 0) + 1));
