@@ -321,11 +321,11 @@ export function makeFarmHost({ canvas, save, getSettings, wallNow, loop, rng, on
     if (!picked) return;
     const got = harvestInto(c, picked, rng);
     sfx('harvest', { level: picked.level });
-    float(ti, pi, `+${picked.count} ${FRUITS[picked.level - 1].hanzi}`);
+    float(ti, pi, `+${picked.count} ${FRUITS[picked.level - 1].name}`);
     if (got && got.bonusSeed != null) {
       // the pineapple's golden hour: a seed falls out of the crown
       sfx('discover');
-      float(ti, pi, `+1 ${FRUITS[got.bonusSeed - 1].hanzi} 种子`, '#f0a03c');
+      float(ti, pi, `+1 ${FRUITS[got.bonusSeed - 1].name} seed`, '#f0a03c');
     }
     save.touch();
     refresh();
@@ -408,7 +408,7 @@ export function makeFarmHost({ canvas, save, getSettings, wallNow, loop, rng, on
   function buildPlotSheet(c, plot, ti, pi) {
     const ripe = isRipe(plot);
     $('plot-title').textContent = plot.kind
-      ? `${FRUITS[plot.level - 1].hanzi} ${FRUITS[plot.level - 1].name}`
+      ? `${FRUITS[plot.level - 1].name} ${FRUITS[plot.level - 1].hanzi}`
       : (plot.slot === 'tree' ? 'Bench 树位' : 'Bed 苗床');
 
     const seeds = $('plot-seeds');
@@ -716,11 +716,20 @@ export function makeFarmHost({ canvas, save, getSettings, wallNow, loop, rng, on
   });
 
   $('to-shop').addEventListener('click', () => { sfx('menu-click'); showShop(); paintCards(); });
+  // Two visible ways out of each drawer — the ✕ in the corner and the Close at
+  // the bottom — plus the tap-on-the-farm-behind-it that always worked. All
+  // three are the same verb.
   $('shop-close').addEventListener('click', () => { sfx('menu-click'); closeSheets(); });
+  $('shop-x').addEventListener('click', () => { sfx('menu-click'); closeSheets(); });
   $('plot-close').addEventListener('click', () => { sfx('menu-click'); closeSheets(); });
+  $('plot-x').addEventListener('click', () => { sfx('menu-click'); closeSheets(); });
 
   return {
     enter, exit, resize, draw, refresh, panUp,
+    // The map's Seed Shop spot: walk to the farm, then open the drawer. The
+    // shop stays a drawer over the farm rather than a screen of its own, so
+    // the player always sees where in the valley it lives.
+    openShop: showShop,
     // WP10's staging asks these: what is worth pointing a glint at.
     isLive: () => live,
     nextRipeMs: () => {

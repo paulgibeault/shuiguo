@@ -156,7 +156,7 @@ export function makeMarketHost({ canvas, router, save, getSettings, rng, loop, s
       clearCanvas($('m-next'));
     } else {
       const f = FRUITS[g.next - 1];
-      label.textContent = `${f.hanzi} ${f.name}`;
+      label.textContent = `${f.name} ${f.hanzi}`;
       paintChip($('m-next'), g.next, 0.34);
     }
     buildCrateStrip();

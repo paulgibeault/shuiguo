@@ -22,13 +22,13 @@ import { sfx } from './sfx.js';
 import { makeRng } from './arcade-rng.js';
 import { paintChip } from './chips.js';
 import { makeRouter } from './mode.js';
-import { chainMultiplier, friendCut } from './economy.js';
-import { earn, hasFarm } from './campaign.js';
+import { chainMultiplier, friendCut, priceOfEquipment } from './economy.js';
+import { earn, hasFarm, crateSize, canGoToMarket, couldUseAHand } from './campaign.js';
 import {
   FIRST_FRIEND, friendOf, openFriends, isBalanced, weightedDraw,
 } from './friends.js';
 import { fruitCard, lockedCard, paintCardsIn } from './cards.js';
-import { multiplier } from './format.js';
+import { multiplier, money } from './format.js';
 import { makeCampaignSave, bootScreen } from './campaign-save.js';
 import { makeFarmHost } from './farm-host.js';
 import { makeMarketHost } from './market-host.js';
@@ -102,7 +102,7 @@ function refreshHud() {
   $('score').textContent = String(g.score);
   $('best').textContent = String(Math.max(best, g.score));
   const f = FRUITS[g.next - 1];
-  $('next-label').textContent = `${f.hanzi} ${f.name}`;
+  $('next-label').textContent = `${f.name} ${f.hanzi}`;
   drawNext();
 }
 
@@ -321,8 +321,8 @@ function hideChainBanner() {
 const router = makeRouter();
 
 router
-  .add('mode', { sheet: $('mode'), onEnter: paintModeBadge })
-  .add('menu', { sheet: $('menu'), onEnter: () => { buildChart(); buildFriends(); } })
+  .add('mode', { sheet: $('mode'), onEnter: refreshMap })
+  .add('menu', { sheet: $('menu'), onEnter: buildChart })
   .add('game', { chrome: [$('hud')] })
   .add('over', { sheet: $('over') });
 
@@ -410,8 +410,9 @@ function fillSummary() {
   const f = FRUITS[level - 1];
   const art = $('over-fruit');
   art.setAttribute('aria-label', f.name);
-  $('over-fruit-hanzi').textContent = f.hanzi;
-  $('over-fruit-pinyin').textContent = f.pinyin;
+  // English first: the name the player can read, then the words to learn.
+  $('over-fruit-name').textContent = f.name;
+  $('over-fruit-alt').textContent = `${f.hanzi} ${f.pinyin}`;
   paintChip(art, level, 0.32);       // the sheet is already shown, so it has a size
 
   // Merges always show (zero is a real result — you dropped and never matched);
@@ -454,7 +455,7 @@ function paySplit() {
   campaignSave.touch();
   campaignSave.flush();
   const f = FRUITS[friend.level - 1];
-  line.textContent = `${f.hanzi} splits the till 分成 +${cut}元`;
+  line.textContent = `${f.name} splits the till +${cut}元`;
   line.hidden = false;
 }
 
@@ -558,6 +559,7 @@ Arcade.onSettingsChange(() => {
   // --font-scale — so each one has to be re-painted, and only while its own
   // sheet is actually visible (a display:none canvas measures 0).
   if (!$('menu').hidden) buildChart();
+  if (!$('mode').hidden) refreshMap();
   if (!$('over').hidden) fillSummary();
   if (router.is('market')) market.refreshHud();
   if (router.is('farm')) farm.refresh();
@@ -610,7 +612,7 @@ function buildChart() {
     cell.appendChild(c);
 
     const cap = document.createElement('figcaption');
-    cap.textContent = locked ? '?' : f.hanzi;
+    cap.textContent = locked ? '?' : f.name;
     cell.appendChild(cap);
 
     holder.appendChild(cell);
@@ -626,16 +628,16 @@ function buildChart() {
 }
 
 // ── whose stall to mind ────────────────────────────────────────────────────
-// One card per friend, on the seed-card idiom the shop and the plot picker
-// already use (js/cards.js): the real fruit, its bilingual name, and the one
-// word that says how their stall is stocked. Friends whose seed has not been
-// earned in a campaign run are dashed silhouettes under the same hint the shop
-// gives, because it is the same rule.
+// The friends' corner of the map. One card per friend, on the seed-card idiom
+// the shop and the plot picker already use (js/cards.js): the real fruit, its
+// name, and the one word that says how their stall is stocked. Friends whose
+// seed has not been earned in a campaign run are dashed silhouettes under the
+// same hint the shop gives, because it is the same rule.
 //
-// With only 草莓 open the whole chooser is hidden and the plain Play button
-// stands in for it — a menu of one is a speed bump. It is rebuilt every time
-// the menu comes up rather than once at boot, exactly like the chart, so the
-// grape you unlocked at market this evening is live by the time you look.
+// With only 草莓 open the grid is hidden and a single labelled door stands in
+// for it — a menu of one is a speed bump. Rebuilt every time the map comes up,
+// exactly like the chart, so the grape you unlocked at market this evening is
+// live by the time you look.
 
 function buildFriends() {
   const holder = $('friends');
@@ -643,10 +645,11 @@ function buildFriends() {
   const open = openFriends(c);
   const many = open.length >= 2;
   holder.textContent = '';
-  // Nobody to choose between: the button below is the whole interface.
+  // Nobody to choose between: the one door is the whole interface.
   holder.hidden = !many;
   $('friends-hint').hidden = !many || open.length === FRIENDS.length;
-  $('play').hidden = many;
+  $('play-free').hidden = many;
+  $('play-free-name').textContent = FRUITS[FIRST_FRIEND.level - 1].name;
   if (!many) return;
 
   for (const f of FRIENDS) {
@@ -655,7 +658,7 @@ function buildFriends() {
         level: f.level, meta: f.flavor,
         onPick: () => { sfx('menu-click'); beginGame(false, f); },
       })
-      : lockedCard(f.level, 'A grower you have not met — merge one at market'));
+      : lockedCard(f.level, 'A grower you have not met — merge one at the market'));
   }
   paintCardsIn(holder);          // the sheet is up now, so the chips have a size
 }
@@ -711,10 +714,43 @@ router
   .add('market', { chrome: [$('market-hud')], onEnter: market.enter, onExit: market.exit })
   .add('appraisal', { sheet: $('appraisal') });
 
-// 🌱 on the Campaign button until the player owns a farm — the one nudge in the
-// game, and it retires the moment it has been acted on.
-function paintModeBadge() {
-  $('campaign-badge').hidden = hasFarm(campaignSave.get());
+// The map, brought up to date on every look — same discipline as the farm:
+// no timers, every spot derived from campaign state right now. A place you
+// cannot go yet is greyed rather than hidden, the shop's own rule.
+function refreshMap() {
+  const c = campaignSave.get();
+  const owned = hasFarm(c);
+
+  // 🌱 on the farm until the player owns it — the one nudge in the game, and
+  // it retires the moment it has been acted on.
+  $('campaign-badge').hidden = owned;
+  $('farm-note').textContent = owned
+    ? `Cash ${money(c.cash)}元`
+    : `For sale — ${money(priceOfEquipment('farm'))}元`;
+
+  // The market needs something in the crate; the shop needs ground to plant.
+  const crate = crateSize(c);
+  $('map-crate').textContent = String(crate);
+  $('map-market').disabled = !canGoToMarket(c);
+  $('map-shop').disabled = !owned;
+
+  // The same quiet 🍓 the farm's map button wears: an empty crate and nothing
+  // ripening soon means a friend could use a hand, and here the friends are.
+  $('friends-badge').hidden = !couldUseAHand(c, wallNow());
+
+  // The opening, said in one line under the map instead of left to be guessed.
+  const hint = $('map-hint');
+  if (c.phase === 'gift-run') {
+    hint.textContent = 'A friend left you a crate of fruit. Sell it at the market — merging pairs pays best.';
+    hint.hidden = false;
+  } else if (c.phase === 'buy-farm') {
+    hint.textContent = 'The farm up the mountain is for sale. Tap it to take a look.';
+    hint.hidden = false;
+  } else {
+    hint.hidden = true;
+  }
+
+  buildFriends();
 }
 
 // Was the run being appraised the gift run? The appraisal lands in `buy-farm`
@@ -752,7 +788,19 @@ function toCampaign() {
 }
 
 $('play-campaign').addEventListener('click', () => { sfx('menu-click'); toCampaign(); });
-$('play-free').addEventListener('click', () => { sfx('menu-click'); router.route('menu'); });
+// The first friend's door on the map — the chooser grid replaces it once there
+// is genuinely a choice (see buildFriends).
+$('play-free').addEventListener('click', () => { sfx('menu-click'); beginGame(false, FIRST_FRIEND); });
+$('map-market').addEventListener('click', () => { sfx('menu-click'); toMarket(); });
+// The shop is a drawer over the farm, so the map walks there and opens it —
+// one tap, and the player still sees where the shop lives.
+$('map-shop').addEventListener('click', () => {
+  sfx('menu-click');
+  if (!hasFarm(campaignSave.get())) return;
+  router.route('farm');
+  farm.openShop();
+});
+$('to-collection').addEventListener('click', () => { sfx('menu-click'); router.route('menu'); });
 $('menu-to-mode').addEventListener('click', () => { sfx('menu-click'); router.route('mode'); });
 $('farm-to-menu').addEventListener('click', () => { sfx('menu-click'); router.route('mode'); });
 $('to-market').addEventListener('click', () => { sfx('menu-click'); toMarket(); });
@@ -786,14 +834,12 @@ bindInput(canvas, {
   toWorldX: (px) => R.toWorldX(px),
 });
 
-// ── free play's own buttons ────────────────────────────────────────────────
-$('play').addEventListener('click', () => { sfx('menu-click'); beginGame(false); });
+// ── the stall's own buttons ────────────────────────────────────────────────
 $('again').addEventListener('click', () => { sfx('menu-click'); beginGame(false); });
 $('to-menu').addEventListener('click', () => {
   sfx('menu-click');
   g.state = 'menu';
-  show('menu');
-  drawIdle();
+  show('mode');            // back to the map — the one place everything is
 });
 
 // ── boot ───────────────────────────────────────────────────────────────────

@@ -35,7 +35,7 @@
     <!-- The campaign's two HUDs. Same slot in the frame as free play's, and
          the router shows exactly one of the three. -->
     <header id="farm-hud" class="campaign-hud" hidden>
-      <div class="stat"><span class="label">元</span><span id="farm-cash" class="value">0</span></div>
+      <div class="stat"><span class="label">Cash 元</span><span id="farm-cash" class="value">0</span></div>
       <button id="to-shop" type="button">Shop 商店</button>
       <button id="to-market" class="go" type="button">
         Market 市场 <span id="crate-count" class="pill">0</span>
@@ -43,14 +43,14 @@
       <!-- 🍓 on the way out when the crate is empty and nothing is ripening
            soon: a friend could use a hand. Derived on every refresh, so it
            retires the moment there is anything to carry down the hill. -->
-      <button id="farm-to-menu" class="icon" type="button" aria-label="Menu">☰<span id="farm-badge" class="badge" hidden>🍓</span></button>
+      <button id="farm-to-menu" class="icon" type="button" aria-label="Back to the map">☰<span id="farm-badge" class="badge" hidden>🍓</span></button>
     </header>
 
     <header id="market-hud" class="campaign-hud" hidden>
       <!-- 元, not Score: during a campaign run the number IS the money, at one
            point to the 元 (js/economy.js). Free play's HUD keeps saying Score —
            that score is arcade pride and never buys anything. -->
-      <div class="stat"><span class="label">元</span><span id="m-score" class="value">0</span></div>
+      <div class="stat"><span class="label">Earned 元</span><span id="m-score" class="value">0</span></div>
       <div class="next-box" aria-label="Next fruit">
         <span class="label">Next</span>
         <canvas id="m-next" width="48" height="48"></canvas>
@@ -71,32 +71,67 @@
       <div id="cards" class="cards" aria-live="polite"></div>
     </div>
 
-    <!-- The front door. Two ways to play the same fruit: the endless stall,
-         and the stall with a farm behind it. -->
+    <!-- The front door is a MAP of the valley now, not a pair of mode words.
+         Every place the game can go is a spot you can see and tap: the farm up
+         the mountain, the market and the seed shop in town, and the friends'
+         stalls along the bottom. The ids survive from the old mode screen
+         (play-campaign is the farm, play-free is the first friend's stall) —
+         same routing, same saves; the map is presentation. -->
     <section id="mode" class="sheet">
       <h1 class="sign"><span class="sign-hanzi">水果摊</span><span class="sign-name">shuǐ guǒ tān</span></h1>
-      <button id="play-campaign" class="big" type="button">
-        Campaign 经营 <span id="campaign-badge" class="badge" hidden>🌱</span>
-      </button>
-      <!-- Not "free play" any more: the endless stall belongs to somebody, and
-           minding it for them is why they pay you a share at close. Same id,
-           same save keys, same records — this is paint, not plumbing. -->
-      <button id="play-free" type="button">Mind 草莓's stall 帮草莓看摊</button>
-      <p class="hint">Campaign: grow the fruit you drop, on a terraced farm in the mountains. 草莓 splits the day's till with you.</p>
+      <nav class="map" aria-label="The valley">
+        <button id="play-campaign" class="map-spot" type="button">
+          <span class="spot-icon" aria-hidden="true">⛰️</span>
+          <span class="spot-body">
+            <span class="spot-name">Your Farm <i class="spot-alt">农场</i>
+              <span id="campaign-badge" class="badge" hidden>🌱</span></span>
+            <span id="farm-note" class="spot-note"></span>
+          </span>
+        </button>
+        <div class="map-path" aria-hidden="true"></div>
+        <div class="map-row">
+          <button id="map-market" class="map-spot" type="button">
+            <span class="spot-icon" aria-hidden="true">🏮</span>
+            <span class="spot-body">
+              <span class="spot-name">Market <i class="spot-alt">市场</i></span>
+              <span class="spot-note">Sell your crate <span id="map-crate" class="pill">0</span></span>
+            </span>
+          </button>
+          <button id="map-shop" class="map-spot" type="button">
+            <span class="spot-icon" aria-hidden="true">🧺</span>
+            <span class="spot-body">
+              <span class="spot-name">Seed Shop <i class="spot-alt">商店</i></span>
+              <span class="spot-note">Seeds &amp; upgrades</span>
+            </span>
+          </button>
+        </div>
+        <div class="map-path" aria-hidden="true"></div>
+        <p class="map-head">Friends' stalls <i class="spot-alt">看摊</i>
+          <span id="friends-badge" class="badge" hidden>🍓</span></p>
+        <!-- One friend: a single labelled door. Two or more: the chooser grid
+             takes its place — a menu of one is a speed bump. -->
+        <button id="play-free" class="map-spot" type="button">
+          <span class="spot-icon" aria-hidden="true">🍓</span>
+          <span class="spot-body">
+            <span class="spot-name">Mind <span id="play-free-name">Strawberry</span>'s stall</span>
+            <span class="spot-note">They split the day's till with you</span>
+          </span>
+        </button>
+        <div id="friends" class="shop-grid" aria-label="Whose stall to mind" hidden></div>
+        <p id="friends-hint" class="hint" hidden>Merge a fruit at the market to meet its grower</p>
+      </nav>
+      <p id="map-hint" class="hint" hidden></p>
+      <button id="to-collection" type="button">Collection 图鉴</button>
     </section>
 
+    <!-- The collection book: every fruit ever made, and the chain they climb.
+         It used to be free play's front door; the map is the front door now,
+         so all that lives here is the chart worth lingering over. -->
     <section id="menu" class="sheet" hidden>
       <h1 class="sign"><span class="sign-hanzi">水果摊</span><span class="sign-name">shuǐ guǒ tān</span></h1>
-      <p class="tagline">Mind the stall. Match pairs. Grow the watermelon 西瓜.</p>
+      <p class="tagline">Every fruit you have ever made. Grow the watermelon 西瓜.</p>
       <div id="chart" class="chart" aria-label="Fruit evolution chain"></div>
-      <!-- Whose stall to mind. Hidden entirely while only 草莓's is open — a
-           menu of one is a speed bump — and the plain button below stands in
-           for it. Each friend's stall opens when their seed is earned in a
-           campaign run, so this grid IS the campaign's reach into free play. -->
-      <div id="friends" class="shop-grid" aria-label="Whose stall to mind" hidden></div>
-      <p id="friends-hint" class="hint" hidden>Merge a fruit at market to meet its grower 合并解锁</p>
-      <button id="play" class="big" type="button">Mind the stall 看摊</button>
-      <button id="menu-to-mode" type="button">Back</button>
+      <button id="menu-to-mode" type="button">Back to Map</button>
       <p class="hint">Slide to aim · release to drop · two of a kind merge into the next fruit · don't cross the line</p>
     </section>
 
@@ -113,7 +148,7 @@
           <figcaption>
             <span class="label">Biggest fruit</span>
             <span class="biggest-name">
-              <b id="over-fruit-hanzi"></b> <i id="over-fruit-pinyin"></i>
+              <b id="over-fruit-name"></b> <i id="over-fruit-alt"></i>
             </span>
           </figcaption>
         </figure>
@@ -126,7 +161,7 @@
       <p id="friend-cut" class="receipt" hidden></p>
 
       <button id="again" class="big" type="button">Again 再来</button>
-      <button id="to-menu" type="button">Menu</button>
+      <button id="to-menu" type="button">Back to Map</button>
     </section>
 
     <!-- ── the campaign's sheets ────────────────────────────────────────────
@@ -136,33 +171,39 @@
          the game goes rather than a drawer the player opens. -->
 
     <section id="shop" class="sheet bottom" hidden>
-      <h2>Shop 商店</h2>
-      <p class="shop-cash">元 <strong id="shop-cash">0</strong></p>
+      <!-- Two ways out, both visible: the ✕ every drawer has, and a Close at
+           the bottom where the thumb already is. (Tapping the farm behind the
+           sheet still works too — but an exit you can SEE beats one you have
+           to guess.) -->
+      <button id="shop-x" class="sheet-x" type="button" aria-label="Close the shop">✕</button>
+      <h2>Seed Shop 商店</h2>
+      <p class="shop-cash">Cash <strong id="shop-cash">0</strong>元</p>
       <h3 class="shop-head">Seeds 种子</h3>
       <div id="shop-seeds" class="shop-grid"></div>
       <!-- How the locked silhouettes in that grid get unlocked. Hidden once
            there is nothing left to unlock. -->
-      <p id="shop-locked-hint" class="hint" hidden>Merge a fruit at market to earn its seed 合并解锁</p>
+      <p id="shop-locked-hint" class="hint" hidden>Merge a fruit at the market to earn its seed</p>
       <h3 class="shop-head">The farm 农场</h3>
       <div id="shop-kit" class="shop-rows"></div>
       <!-- The campaign's own record, from Arcade.stats. Absent until there is
            one, because "Market days 0" is not a record, it is a scold. -->
       <p id="shop-stats" class="hint" hidden></p>
-      <button id="shop-close" type="button">Done</button>
+      <button id="shop-close" type="button">Close</button>
     </section>
 
     <section id="plot" class="sheet bottom" hidden>
+      <button id="plot-x" class="sheet-x" type="button" aria-label="Close">✕</button>
       <h2 id="plot-title">Plot</h2>
       <p id="plot-note" class="hint"></p>
       <div id="plot-seeds" class="shop-grid"></div>
       <div id="plot-rows" class="shop-rows"></div>
-      <button id="plot-close" type="button">Done</button>
+      <button id="plot-close" type="button">Close</button>
     </section>
 
     <section id="appraisal" class="sheet" hidden>
       <h2>The day's take 今天的收入</h2>
       <dl id="appraisal-lines" class="ledger"></dl>
-      <p class="final">元 <strong id="appraisal-total">0</strong></p>
+      <p class="final">Total <strong id="appraisal-total">0</strong>元</p>
       <div id="appraisal-seeds" class="found-seeds" hidden>
         <span class="label">Found in the till 种子</span>
         <div id="appraisal-seed-chips" class="shop-grid"></div>

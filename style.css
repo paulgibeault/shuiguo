@@ -401,10 +401,10 @@ button.big {
 .campaign-hud button.icon { padding: 0.4rem 0.7rem; }
 .campaign-hud .stat { min-width: 3.5rem; }
 
-/* The Market button carries the crate count and lights up once there is
- * something in it. Disabled rather than hidden — an empty crate is a reason to
- * go and farm, and hiding the button would hide the reason. */
-#to-market .pill {
+/* The crate-count pill, on the farm HUD's Market button and the map's Market
+ * spot alike. Both carry the same number for the same reason: the crate IS the
+ * ticket to market, and the count is whether the trip is worth making. */
+.pill {
   display: inline-block;
   min-width: 1.4rem;
   padding: 0 0.35rem;
@@ -414,6 +414,9 @@ button.big {
   font-variant-numeric: tabular-nums;
   font-weight: 700;
 }
+/* The Market button lights up once there is something in the crate. Disabled
+ * rather than hidden — an empty crate is a reason to go and farm, and hiding
+ * the button would hide the reason. */
 #to-market.ready {
   background: var(--accent);
   color: #fff;
@@ -452,6 +455,67 @@ button.big {
 /* ── bottom sheets (shop, plot, terrace) ──────────────────────────────────
  * Drawers over a canvas that keeps drawing, in the same spirit as the
  * discovery cards: the farm is never paused, it is only covered. */
+/* ── the map ──────────────────────────────────────────────────────────────
+ * The front door: every place in the valley as a spot you can tap, joined by
+ * a dashed footpath. Spots are buttons in the game's plank-and-ink idiom; a
+ * place you cannot go yet is greyed, never hidden — same rule as the shop. */
+.map {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  width: min(19rem, 88vw);
+}
+.map-spot {
+  display: flex;
+  align-items: center;
+  text-align: left;
+  gap: 0.65rem;
+  width: 100%;
+  padding: 0.55rem 0.9rem;
+  border-radius: 1rem;
+}
+.map-spot:disabled { opacity: 0.45; cursor: default; box-shadow: none; }
+/* display:flex outranks the hidden attribute's own rule — same counterpart the
+ * HUD headers carry, or the one door ghosts beside the chooser that replaced it. */
+.map-spot[hidden] { display: none; }
+.map-row { display: flex; gap: 0.55rem; }
+.map-row .map-spot { flex: 1; min-width: 0; }
+.map-row .spot-name { font-size: 0.95rem; }
+.spot-icon { font-size: 1.5rem; flex: none; }
+.spot-body { display: flex; flex-direction: column; gap: 0.05rem; min-width: 0; }
+.spot-name { font-weight: 700; line-height: 1.25; }
+.spot-alt { font-style: normal; font-size: 0.72em; opacity: 0.55; white-space: nowrap; }
+.spot-note { font-size: 0.72rem; opacity: 0.7; line-height: 1.3; }
+.spot-note .pill { margin-left: 0.15rem; }
+/* the footpath between spots — enough to read as "places on a walk" */
+.map-path {
+  height: 1.05rem;
+  align-self: center;
+  border-left: 2px dashed color-mix(in srgb, var(--ink) 45%, transparent);
+}
+.map-head {
+  margin-top: 0.15rem;
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  opacity: 0.6;
+  font-weight: 700;
+  text-align: center;
+}
+.map .shop-grid { justify-content: center; margin-top: 0.2rem; }
+.map + .hint { max-width: 19rem; }
+
+/* One visible way out of a drawer, where every drawer has it. */
+.sheet-x {
+  position: absolute;
+  top: 0.7rem;
+  right: 0.8rem;
+  padding: 0.15rem 0.65rem;
+  font-size: 1rem;
+  line-height: 1.6;
+  border-radius: 999px;
+}
+
 .sheet.bottom {
   top: auto;
   bottom: 0;
@@ -508,11 +572,11 @@ button.big {
   max-width: 7rem;
 }
 .seed-card .chip-art { width: 2.6rem; height: 2.6rem; }
-.seed-hanzi { font-size: 0.9rem; line-height: 1.15; letter-spacing: 0.02em; }
-/* The learning moment, at shop scale: tone marks are the point, so the pinyin
- * is legible rather than decorative. */
-.seed-pinyin { font-size: 0.65rem; line-height: 1.2; opacity: 0.85; }
-.seed-en { font-size: 0.6rem; line-height: 1.2; opacity: 0.55; }
+.seed-name { font-size: 0.82rem; font-weight: 700; line-height: 1.15; }
+/* The learning moment, at shop scale: hanzi and pinyin together under the
+ * name the player can already read — tone marks stay legible, and the label
+ * is never a puzzle. */
+.seed-alt { font-size: 0.66rem; line-height: 1.2; opacity: 0.7; }
 .seed-price {
   margin-top: 0.2rem;
   font-size: 0.78rem;
@@ -533,7 +597,7 @@ button.big {
   box-shadow: none;
   cursor: default;
 }
-.seed-card.locked .seed-hanzi { opacity: 0.5; letter-spacing: 0.05em; }
+.seed-card.locked .seed-name { opacity: 0.5; letter-spacing: 0.05em; }
 
 .shop-rows { display: flex; flex-direction: column; gap: 0.35rem; width: 100%; max-width: 26rem; }
 .shop-row {

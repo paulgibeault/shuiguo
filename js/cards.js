@@ -37,6 +37,9 @@ const CHIP_SHARE = 0.3;
  *   onPick   what pressing it does
  *   note     a second, quieter line (held counts, flavour)
  */
+// English leads: the name the player can read is the big line, and the
+// hanzi + pinyin ride underneath as the learning flavor. The card still
+// teaches both languages — it just never makes the label a puzzle.
 export function fruitCard({ level, meta = '', enabled = true, onPick, note = '' }) {
   const f = FRUITS[level - 1];
   const cell = document.createElement('button');
@@ -46,12 +49,10 @@ export function fruitCard({ level, meta = '', enabled = true, onPick, note = '' 
   cell.style.setProperty('--fruit', f.color);
   cell.innerHTML =
     '<canvas class="chip-art" role="img"></canvas>' +
-    '<span class="seed-hanzi"></span><span class="seed-pinyin"></span>' +
-    '<span class="seed-en"></span><span class="seed-price"></span>' +
-    '<span class="seed-held"></span>';
-  cell.querySelector('.seed-hanzi').textContent = f.hanzi;
-  cell.querySelector('.seed-pinyin').textContent = f.pinyin;
-  cell.querySelector('.seed-en').textContent = f.name;
+    '<span class="seed-name"></span><span class="seed-alt"></span>' +
+    '<span class="seed-price"></span><span class="seed-held"></span>';
+  cell.querySelector('.seed-name').textContent = f.name;
+  cell.querySelector('.seed-alt').textContent = `${f.hanzi} ${f.pinyin}`;
   cell.querySelector('.seed-price').textContent = meta;
   cell.querySelector('.seed-held').textContent = note;
   cell.querySelector('.chip-art').setAttribute('aria-label', f.name);
@@ -74,7 +75,7 @@ export function lockedCard(level, label) {
   cell.className = 'seed-card locked';
   cell.innerHTML =
     '<canvas class="chip-art" role="img" aria-label="Undiscovered fruit"></canvas>' +
-    '<span class="seed-hanzi">?</span>';
+    '<span class="seed-name">?</span>';
   cell.setAttribute('aria-label', label);
   cell.dataset.level = String(level);
   return cell;
