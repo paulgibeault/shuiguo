@@ -5,10 +5,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  SCENE, THEMES, themeOf,
+  SCENE, THEMES, PERCH_R, perchAt, themeOf,
   paintSky, paintSkyline, paintStall, paintAwning, paintLanterns, paintLeaf,
 } from '../js/scene.js';
-import { WORLD } from '../js/constants.js';
+import { WORLD, radiusOf } from '../js/constants.js';
 
 function stubCtx() {
   const calls = [];
@@ -118,4 +118,31 @@ test('lantern sway is imperceptible, and stops entirely under reduced motion', (
   assert.deepEqual(a.calls, b.calls);
   const c = stubCtx(); paintLanterns(c, THEMES.dark, 0, 1);
   assert.ok(c.calls.length > 0);
+});
+
+// ── the perch ──────────────────────────────────────────────────────────────
+// Where a friend sits while they watch you work. The rule is that it is not
+// the board — and "beside the board" turned out not to be enough: a seat level
+// with the deadline sat square in the drop path. The honest seat is below the
+// counter, where nothing the physics touches can ever go.
+
+test('the perch is below the field of play, never in it', () => {
+  const r = PERCH_R;
+  const p = perchAt(r);
+  // Nothing the physics touches goes below the floor, so the one rule that
+  // matters is that the whole friend stays under the counter: the first perch
+  // was level with the deadline and sat square in the drop path.
+  assert.ok(p.y - r > WORLD.floorY, `the friend reaches up into the board at ${p.y - r}`);
+  // …and inside the stall horizontally, so no viewport clips them sideways.
+  assert.ok(p.x - r >= -SCENE.wall, `the friend is clipped by the bezel at ${p.x - r}`);
+  assert.ok(p.x + r < WORLD.width / 4, 'the friend is sitting out on the counter');
+  // The seat has to be reachable by a modest letterbox: every portrait
+  // viewport shows at least ~40 world units below the world, and the friend
+  // must fit wholly inside that or they are a pair of ears behind the bezel.
+  assert.ok(p.y + r < WORLD.height + 40, `the seat is ${p.y + r - WORLD.height} units below the world`);
+});
+
+test('a perched friend is small — furniture at the stall, not a fruit in play', () => {
+  assert.ok(PERCH_R > SCENE.wall, 'the friend is narrower than the plank beside them');
+  assert.ok(PERCH_R < radiusOf(2), 'the friend is drawn at full fruit size');
 });

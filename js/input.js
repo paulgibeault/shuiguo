@@ -6,6 +6,12 @@
 // Release always drops at the LAST AIMED x, never at the release point: on a
 // touch screen the finger rolls a few pixels on lift-off, and a drop that
 // drifts from where you lined it up feels like the game cheated you.
+//
+// TWO HOSTS, ONE CANVAS. Free play and the campaign's market run share the
+// board, so the binding is made ONCE and asks an adapter which game — if any —
+// is currently being driven. Binding twice would give every drag two dropped
+// fruit; asking each frame means the farm screen, the menus and the appraisal
+// all correctly receive nothing at all.
 
 import { aim, drop } from './game.js';
 
@@ -15,12 +21,26 @@ import { aim, drop } from './game.js';
 const CANCEL_DROP_PX = 80;
 const CANCEL_ZONE = 0.75;
 
-export function bindInput(canvas, g, toWorldX, onDropped) {
+/**
+ * adapter: {
+ *   game()          the game being driven right now, or null
+ *   toWorldX(px)    that game's view transform
+ *   onDropped(g)    optional, after a successful drop
+ * }
+ */
+export function bindInput(canvas, adapter) {
   let pointerDown = false;
   let downY = 0;
 
-  const tryDrop = () => {
-    if (drop(g)) onDropped();
+  // The game only if it is actually take-able input: a finished board and a
+  // sold-out dropper both correctly refuse, inside js/game.js.
+  const active = () => {
+    const g = adapter.game();
+    return g && g.state === 'playing' ? g : null;
+  };
+
+  const tryDrop = (g) => {
+    if (drop(g) && adapter.onDropped) adapter.onDropped(g);
   };
 
   // A release that reads as "never mind" — dragged well down the board, or
@@ -36,36 +56,40 @@ export function bindInput(canvas, g, toWorldX, onDropped) {
   };
 
   canvas.addEventListener('pointerdown', (e) => {
-    if (g.state !== 'playing') return;
+    const g = active();
+    if (!g) return;
     pointerDown = true;
     downY = e.clientY;
     canvas.setPointerCapture(e.pointerId);
-    aim(g, toWorldX(e.clientX));
+    aim(g, adapter.toWorldX(e.clientX));
     e.preventDefault();
   });
 
   canvas.addEventListener('pointermove', (e) => {
-    if (!pointerDown || g.state !== 'playing') return;
-    aim(g, toWorldX(e.clientX));
+    const g = active();
+    if (!pointerDown || !g) return;
+    aim(g, adapter.toWorldX(e.clientX));
   });
 
   canvas.addEventListener('pointerup', (e) => {
     if (!pointerDown) return;
     pointerDown = false;
-    if (g.state !== 'playing') return;
+    const g = active();
+    if (!g) return;
     if (isCancel(e)) return;          // aim is kept; nothing is dropped
-    tryDrop();
+    tryDrop(g);
   });
 
   canvas.addEventListener('pointercancel', () => { pointerDown = false; });
 
   canvas.addEventListener('keydown', (e) => {
-    if (g.state !== 'playing') return;
+    const g = active();
+    if (!g) return;
     const step = e.shiftKey ? 24 : 8;
     if (e.key === 'ArrowLeft')       { aim(g, g.dropX - step); e.preventDefault(); }
     else if (e.key === 'ArrowRight') { aim(g, g.dropX + step); e.preventDefault(); }
     else if (e.key === ' ' || e.key === 'Enter' || e.key === 'ArrowDown') {
-      tryDrop();
+      tryDrop(g);
       e.preventDefault();
     }
   });

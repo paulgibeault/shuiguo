@@ -14,6 +14,10 @@
   --wood-edge: #8a6742;
   --wood-ink: #4a3520;
   --rope: rgba(90, 70, 50, 0.55);
+  /* What sits behind the phone column on a window wider than a phone. The two
+   * stops are the farm's own sky (FARM_THEMES in js/farm-scene.js) — the void
+   * around the game should be the same weather as the game. */
+  --backdrop: linear-gradient(165deg, #bcd9e8, #fdf1d6);
 }
 [data-theme="dark"] {
   --paper: #221d16;
@@ -26,26 +30,34 @@
   --wood-edge: #3a2c1c;
   --wood-ink: #f0e2c8;
   --rope: rgba(232, 220, 200, 0.4);
+  --backdrop: linear-gradient(165deg, #2a2447, #4a3550);
 }
 
 * { box-sizing: border-box; margin: 0; }
 
 html, body { height: 100%; }
 body {
-  background: var(--paper);
+  background: var(--backdrop);
   color: var(--ink);
   font-family: "Avenir Next", "Hiragino Sans", system-ui, sans-serif;
   overflow: hidden;
   touch-action: none;
 }
 
+/* The game is a phone held in front of you, at every window size. Capped at a
+ * phone's width and centred, so a laptop gets the same column on the farm's own
+ * sky rather than a letterboxed strip in a void — and so nothing has to be
+ * designed twice. The height is the only thing that flexes: .stage shrinks and
+ * both renderers fit-scale into whatever CSS box they are given. */
 .frame {
   position: relative;
   height: 100dvh;
-  max-width: 34rem;
+  max-width: 28rem;
   margin: 0 auto;
   display: flex;
   flex-direction: column;
+  background: var(--paper);
+  box-shadow: 0 0 2.5rem var(--shadow);
 }
 
 /* The board plus the two surfaces that float over it without pausing it. */
@@ -71,6 +83,12 @@ body {
   padding: 0.5rem 1rem 0.25rem;
   gap: 0.75rem;
 }
+/* The router shows exactly one header and sets `hidden` on the others, and the
+ * `display: flex` above outranks that attribute's own rule — so every header in
+ * the frame needs this counterpart or it ghosts over every screen AND takes a
+ * flex row with it, pushing the canvas down. The campaign's two carry the same
+ * rule beside their own layout, below. */
+#hud[hidden] { display: none; }
 .stat { display: flex; flex-direction: column; align-items: center; min-width: 4.5rem; }
 .label {
   font-size: 0.7rem;
@@ -89,7 +107,12 @@ body {
   padding: 0.35rem 0.9rem;
   box-shadow: 0 2px 8px var(--shadow);
 }
-#next { width: 2.75rem; height: 2.75rem; }
+/* Both NEXT canvases, and this is load-bearing rather than cosmetic: js/chips.js
+ * sizes a chip's backing store from its CSS box, so a canvas with no CSS size
+ * of its own re-measures its own intrinsic size on every paint and grows a
+ * little each time. The market's used to be held down only by being squeezed in
+ * a nowrap flex row — which is not a size, it is a coincidence. */
+#next, #m-next { width: 2.75rem; height: 2.75rem; }
 .next-name { font-size: 0.7rem; opacity: 0.8; }
 
 /* ── chain banner ────────────────────────────────────────────────────────
@@ -144,6 +167,10 @@ body {
     "art    name";
   align-items: center;
   gap: 0.2rem 0.9rem;
+  /* A fruit's name is two words; the campaign's opening cards carry a sentence.
+   * Capped so the long ones wrap into the card instead of stretching it to the
+   * width of the frame. */
+  max-width: min(21rem, calc(100% - 2rem));
   padding: 0.9rem 1.3rem 1rem;
   border-radius: 1.1rem;
   border: 2px solid var(--wood-edge);
@@ -194,6 +221,12 @@ body {
   flex-direction: column;
   align-items: center;
   justify-content: center;
+  /* A laptop window in landscape is shorter than a phone, and the menu's chart
+   * is taller than it. `safe` keeps the overflow reachable instead of centring
+   * the top of the sheet out of the scroll range; engines without it fall back
+   * to the plain `center` above, which is exactly today's behaviour. */
+  justify-content: safe center;
+  overflow-y: auto;
   gap: 1rem;
   padding: 2rem 1.5rem;
   background: color-mix(in srgb, var(--paper) 88%, transparent);
@@ -239,6 +272,19 @@ h2 { font-size: 1.8rem; }
 .final { font-size: 1.3rem; }
 .final strong { font-size: 2rem; color: var(--accent); }
 .new-best { color: var(--accent); font-weight: 700; animation: pop 0.5s ease-out; }
+
+/* The friend's split, on the game-over sheet: a receipt line, in the register
+   the appraisal's ledger and the discovery cards already speak. Quiet — it is
+   a thing that happened, not a thing to celebrate. */
+.receipt {
+  font-size: 0.95rem;
+  font-variant-numeric: tabular-nums;
+  padding: 0.35rem 0.9rem;
+  border-radius: 999px;
+  border: 1px dashed color-mix(in srgb, var(--accent) 45%, transparent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+.receipt[hidden] { display: none; }
 
 @keyframes pop {
   0% { transform: scale(0.6); opacity: 0; }
@@ -329,7 +375,308 @@ button.big {
  * chart doubles as the collection book, and the blank pear is the reason to
  * go get one. contrast(0) flattens the painted fruit to a single tone, so
  * the shape survives and every cue that identifies it does not. */
-.chip.locked .chip-art { filter: grayscale(1) contrast(0) brightness(0.72); opacity: 0.42; }
-[data-theme="dark"] .chip.locked .chip-art { filter: grayscale(1) contrast(0) brightness(1.7); opacity: 0.3; }
+.chip.locked .chip-art,
+.seed-card.locked .chip-art { filter: grayscale(1) contrast(0) brightness(0.72); opacity: 0.42; }
+[data-theme="dark"] .chip.locked .chip-art,
+[data-theme="dark"] .seed-card.locked .chip-art { filter: grayscale(1) contrast(0) brightness(1.7); opacity: 0.3; }
 .chip.locked figcaption { opacity: 0.5; letter-spacing: 0.05em; }
 .arrow { font-size: 0.7rem; opacity: 0.5; align-self: center; margin-bottom: 0.6rem; }
+
+/* ── the campaign ─────────────────────────────────────────────────────────
+ * Everything below belongs to the farm and the market run. Free play's rules
+ * above are untouched; these are additive, and every one of them is scoped to
+ * an id or a class that only the campaign's markup carries. */
+
+/* The campaign HUDs sit in the same slot as free play's, and the router shows
+ * exactly one of the three. */
+.campaign-hud {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem 0.25rem;
+}
+.campaign-hud[hidden] { display: none; }
+.campaign-hud button { padding: 0.4rem 0.9rem; font-size: 0.85rem; white-space: nowrap; }
+.campaign-hud button.icon { padding: 0.4rem 0.7rem; }
+.campaign-hud .stat { min-width: 3.5rem; }
+
+/* The crate-count pill, on the farm HUD's Market button and the map's Market
+ * spot alike. Both carry the same number for the same reason: the crate IS the
+ * ticket to market, and the count is whether the trip is worth making. */
+.pill {
+  display: inline-block;
+  min-width: 1.4rem;
+  padding: 0 0.35rem;
+  margin-left: 0.25rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--ink) 12%, transparent);
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+/* The Market button lights up once there is something in the crate. Disabled
+ * rather than hidden — an empty crate is a reason to go and farm, and hiding
+ * the button would hide the reason. */
+#to-market.ready {
+  background: var(--accent);
+  color: #fff;
+  border-color: color-mix(in srgb, var(--accent) 70%, black);
+}
+#to-market.ready .pill { background: rgba(255, 255, 255, 0.28); }
+#to-market:disabled { opacity: 0.5; cursor: default; }
+
+/* 🌱 — the one nudge in the game, and it retires the moment it is acted on. */
+.badge { font-size: 0.9em; }
+
+/* What is left to sell. The crate emptying IS the run's clock, so it gets its
+ * own full-width row under the stats rather than whatever is left between the
+ * NEXT box and Pack up — squeezed in there a phone showed about one chip, which
+ * is a clock with no hands. Still scrolls rather than wrapping: a crate of nine
+ * kinds must not push the board off the screen, and the right edge fades to say
+ * so (with five kinds the fade lands on empty strip and is invisible). */
+#market-hud { flex-wrap: wrap; }
+.crate-strip {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  flex: 1 0 100%;
+  order: 1;
+  min-width: 0;
+  min-height: 2.6rem;
+  overflow-x: auto;
+  scrollbar-width: none;
+  mask-image: linear-gradient(90deg, #000 calc(100% - 1.4rem), transparent 100%);
+}
+.crate-strip::-webkit-scrollbar { display: none; }
+.crate-chip { display: flex; flex-direction: column; align-items: center; margin: 0; flex: none; }
+.crate-chip .chip-art { width: 1.6rem; height: 1.6rem; }
+.crate-chip figcaption { font-size: 0.55rem; opacity: 0.75; font-variant-numeric: tabular-nums; }
+
+/* ── bottom sheets (shop, plot, terrace) ──────────────────────────────────
+ * Drawers over a canvas that keeps drawing, in the same spirit as the
+ * discovery cards: the farm is never paused, it is only covered. */
+/* ── the map ──────────────────────────────────────────────────────────────
+ * The front door: every place in the valley as a spot you can tap, joined by
+ * a dashed footpath. Spots are buttons in the game's plank-and-ink idiom; a
+ * place you cannot go yet is greyed, never hidden — same rule as the shop. */
+.map {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  width: min(19rem, 88vw);
+}
+.map-spot {
+  display: flex;
+  align-items: center;
+  text-align: left;
+  gap: 0.65rem;
+  width: 100%;
+  padding: 0.55rem 0.9rem;
+  border-radius: 1rem;
+}
+.map-spot:disabled { opacity: 0.45; cursor: default; box-shadow: none; }
+/* display:flex outranks the hidden attribute's own rule — same counterpart the
+ * HUD headers carry, or the one door ghosts beside the chooser that replaced it. */
+.map-spot[hidden] { display: none; }
+.map-row { display: flex; gap: 0.55rem; }
+.map-row .map-spot { flex: 1; min-width: 0; }
+.map-row .spot-name { font-size: 0.95rem; }
+.spot-icon { font-size: 1.5rem; flex: none; }
+.spot-body { display: flex; flex-direction: column; gap: 0.05rem; min-width: 0; }
+.spot-name { font-weight: 700; line-height: 1.25; }
+.spot-alt { font-style: normal; font-size: 0.72em; opacity: 0.55; white-space: nowrap; }
+.spot-note { font-size: 0.72rem; opacity: 0.7; line-height: 1.3; }
+.spot-note .pill { margin-left: 0.15rem; }
+/* the footpath between spots — enough to read as "places on a walk" */
+.map-path {
+  height: 1.05rem;
+  align-self: center;
+  border-left: 2px dashed color-mix(in srgb, var(--ink) 45%, transparent);
+}
+.map-head {
+  margin-top: 0.15rem;
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  opacity: 0.6;
+  font-weight: 700;
+  text-align: center;
+}
+.map .shop-grid { justify-content: center; margin-top: 0.2rem; }
+.map + .hint { max-width: 19rem; }
+
+/* One visible way out of a drawer, anchored top-LEFT where every drawer has
+ * it. Sticky, not absolute: the sheet scrolls, and an absolutely positioned ✕
+ * rides the layout wherever the flow puts it — sticky pins it to the visible
+ * top edge and keeps it there while the shop scrolls under it. The negative
+ * bottom margin lets the title keep the centre line to itself. */
+.sheet-x {
+  position: sticky;
+  top: 0;
+  align-self: flex-start;
+  z-index: 2;
+  margin: -0.3rem 0 -2.6rem;
+  padding: 0.15rem 0.65rem;
+  font-size: 1rem;
+  line-height: 1.6;
+  border-radius: 999px;
+}
+
+.sheet.bottom {
+  top: auto;
+  bottom: 0;
+  justify-content: flex-end;
+  gap: 0.6rem;
+  padding: 1.1rem 1rem calc(1.1rem + env(safe-area-inset-bottom));
+  border-radius: 1.2rem 1.2rem 0 0;
+  background: color-mix(in srgb, var(--paper) 96%, transparent);
+  box-shadow: 0 -6px 24px var(--shadow);
+  max-height: 78%;
+  overflow-y: auto;
+}
+.sheet.bottom h2 { font-size: 1.3rem; }
+.shop-head {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  opacity: 0.6;
+  font-weight: 700;
+}
+.shop-cash { font-size: 0.95rem; opacity: 0.85; }
+.shop-cash strong { font-size: 1.3rem; color: var(--accent); }
+
+.shop-grid {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.45rem;
+  max-width: 26rem;
+}
+/* A seed card is the real fruit at its best, its name in both languages, and
+ * the one number that matters where it is standing — a price in the shop, a
+ * count in the drawer when the question is what to plant. Unaffordable cards
+ * are greyed, never removed: seeing what you cannot afford yet is most of the
+ * reason to go and earn it.
+ *
+ * Each card is tinted with its own fruit's --fruit (set by js/farm-host.js from
+ * the FRUITS table, so the colour lives in exactly one place). Mixed rather than
+ * used neat: a card washed in full-strength cherry red would out-shout the
+ * painted cherry sitting on it, and the fruit is the thing to look at. */
+.seed-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.02rem;
+  margin: 0;
+  padding: 0.45rem 0.55rem 0.4rem;
+  border-radius: 0.8rem;
+  border: 2px solid color-mix(in srgb, var(--fruit, var(--wood-edge)) 45%, var(--wood-edge));
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--fruit, var(--card)) 12%, var(--card)), var(--card));
+  box-shadow: 0 2px 0 var(--shadow);
+  min-width: 5rem;
+  max-width: 7rem;
+}
+.seed-card .chip-art { width: 2.6rem; height: 2.6rem; }
+.seed-name { font-size: 0.82rem; font-weight: 700; line-height: 1.15; }
+/* The learning moment, at shop scale: hanzi and pinyin together under the
+ * name the player can already read — tone marks stay legible, and the label
+ * is never a puzzle. */
+.seed-alt { font-size: 0.66rem; line-height: 1.2; opacity: 0.7; }
+.seed-price {
+  margin-top: 0.2rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: color-mix(in srgb, var(--fruit, var(--accent)) 45%, var(--accent));
+}
+.seed-held { font-size: 0.58rem; opacity: 0.6; min-height: 0.7rem; font-variant-numeric: tabular-nums; }
+.seed-card figcaption { font-size: 0.65rem; opacity: 0.75; font-variant-numeric: tabular-nums; }
+.seed-card.off { opacity: 0.42; cursor: default; box-shadow: none; }
+/* A seed you have not EARNED yet is a silhouette under a question mark — the
+ * same language the menu's collection chart speaks, because it is the same
+ * sentence ("this exists, go and get it") about a different verb. Dashed rather
+ * than solid, so a locked card never reads as a card you failed to afford. */
+.seed-card.locked {
+  border-style: dashed;
+  background: transparent;
+  box-shadow: none;
+  cursor: default;
+}
+.seed-card.locked .seed-name { opacity: 0.5; letter-spacing: 0.05em; }
+
+.shop-rows { display: flex; flex-direction: column; gap: 0.35rem; width: 100%; max-width: 26rem; }
+.shop-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-areas: "name price" "note price";
+  align-items: center;
+  gap: 0 0.8rem;
+  text-align: left;
+  border-radius: 0.7rem;
+  padding: 0.5rem 0.9rem;
+  border-width: 2px;
+}
+.row-name { grid-area: name; font-size: 0.95rem; }
+.row-note { grid-area: note; font-size: 0.68rem; opacity: 0.65; }
+.row-price {
+  grid-area: price;
+  font-weight: 700;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.shop-row.off { opacity: 0.45; cursor: default; box-shadow: none; }
+
+/* ── the appraisal ────────────────────────────────────────────────────────
+ * The day's takings, itemized, landing one line at a time. The launcher's base
+ * stylesheet collapses every animation to one instant frame under reduced
+ * motion, so the whole ledger simply appears — which is right, because it is
+ * information, and the host skips the count-up in that case too. */
+.ledger {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin: 0;
+  min-width: 15rem;
+  max-width: 22rem;
+  width: 100%;
+}
+.ledger div {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 1rem;
+  padding: 0.35rem 0.9rem;
+  border-radius: 0.6rem;
+  background: var(--card);
+  box-shadow: 0 2px 8px var(--shadow);
+}
+.ledger dt { font-size: 0.9rem; }
+.ledger dd { margin: 0; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--accent); }
+.ledger div.landing { animation: line-in 0.34s cubic-bezier(0.2, 1.4, 0.5, 1) backwards; }
+
+@keyframes line-in {
+  0% { transform: translateY(-0.6rem) scale(0.94); opacity: 0; }
+  100% { transform: none; opacity: 1; }
+}
+
+/* Seeds that turned up in the till — the run's drip, batched into one line so
+ * it reads as a find rather than as a dribble. */
+.found-seeds { display: flex; flex-direction: column; align-items: center; gap: 0.3rem; }
+.found-seeds[hidden] { display: none; }
+
+/* Beat one of the opening: the gift crate pulses beside the dropper. Nothing
+ * to read, nothing to dismiss — the only moving thing on screen is the thing
+ * to use, and it stops the moment it is used. The SDK's base stylesheet
+ * collapses animations under reduced motion, so this simply sits still there. */
+.crate-strip.pulse .crate-chip { animation: crate-pulse 1.6s ease-in-out infinite; }
+.crate-strip.pulse .crate-chip:nth-child(2) { animation-delay: 0.12s; }
+.crate-strip.pulse .crate-chip:nth-child(3) { animation-delay: 0.24s; }
+.crate-strip.pulse .crate-chip:nth-child(4) { animation-delay: 0.36s; }
+.crate-strip.pulse .crate-chip:nth-child(5) { animation-delay: 0.48s; }
+
+@keyframes crate-pulse {
+  0%, 100% { transform: none; }
+  50% { transform: translateY(-0.14rem) scale(1.06); }
+}

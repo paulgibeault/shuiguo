@@ -65,6 +65,33 @@ export const FACES = [
   { eye: 0.11, gap: 0.44, eyeY: -0.15, lid: 0.12, mouth: 0.20, mouthY: 0.16, blush: 0.10 }, // watermelon — stoic
 ];
 
+// The friends whose stalls you can mind when you are not running your own.
+//
+// The campaign pillar — no named characters, no dialog — stands, because a
+// friend IS a fruit: name, face, portrait and colour all come out of the tables
+// above, so the whole cast costs no new art and no new words. Each of them
+// stocks their stall differently, which is the entire mechanical difference
+// between them.
+//
+// A friend's stall opens when their seed is unlocked, and seeds are unlocked
+// only by merging that fruit in a CAMPAIGN run — so the cast is met through the
+// campaign and pays back into it. That is the loop closing in both directions,
+// and it needs no persistence of its own: `c.unlocked` already knows.
+//
+// The table is the invitation to grow this later. The proud 菠萝 running a
+// pineapple-only gag stall is sitting right there.
+export const FRIENDS = [
+  // level: the friend IS this fruit. weights: how their crate of the sky is
+  // stocked, over spawn levels 1..5. flavor: one word, both languages.
+  //
+  // Even weights are what make a stall COMPARABLE, which is why 草莓's is the
+  // only one whose runs post to the records (js/friends.js §isBalanced) — a
+  // cozy-stall high score would be a lie on the board.
+  { level: 2, weights: [1, 1, 1, 1, 1], flavor: 'Balanced 平衡' },   // 草莓 — the first friend, and always open
+  { level: 3, weights: [3, 3, 2, 1, 0], flavor: 'Cozy 悠闲' },       // 葡萄 — small fruit, long runs, chain paradise
+  { level: 6, weights: [0, 1, 1, 2, 3], flavor: 'Risky 冒险' },      // 苹果 — big stock, the board fills fast and pays fast
+];
+
 export const MAX_LEVEL = FRUITS.length;               // 11
 export const MAX_SPAWN_LEVEL = 5;                     // only 1..5 drop randomly
 // Two watermelons annihilate — the ultimate merge. Continue the doubling.
@@ -91,6 +118,143 @@ export const PHYS = {
   impactSpeed: 120,     // approach above this is a "landing" worth a bounce event
 };
 
+// ── the farm half ──────────────────────────────────────────────────────────
+//
+// Campaign only. `FRUITS` above stays exactly the free-play table — a parallel
+// row per level keeps the farm's columns out of the arcade game's data, so
+// free play cannot drift by accident.
+//
+// A fruit's SALE value is its existing `score` (face value). What the farm adds
+// is how it is grown:
+//
+//   kind      'bed'  annual — plant a seed, grow once, harvest, plot empties
+//             'tree' perennial — matures once, then fruits on a cycle forever
+//             'vine' perennial that additionally needs a trellis on the plot
+//   growthMs  time from planting to the FIRST ripe crop
+//   cycleMs   perennials: time from harvest to ripe again. null for annuals.
+//             Faster than growthMs for every tree the player PLANTS — raising
+//             one is the investment, and the crops after it are the return.
+//             The cherry is the exception, and it is the only tree nobody
+//             plants: it comes with the farm, already grown by somebody else,
+//             so its first crop lands sooner than its steady cycle.
+//   yield     fruit per harvest, dropped into the crate
+//   cost      元 for one seed (bed) or sapling (tree/vine)
+//
+// Deliberate shape: small fruit are cheap, fast and generous; big fruit are
+// capital. Pineapple is the outlier and the game's one running joke — real
+// ones take two years, so this one takes a day.
+//
+// The generosity floor (pinned by tests/fruits): an ANNUAL always clears its
+// seed in the single harvest it lives for, and a PERENNIAL clears its sapling
+// within a handful of cycles and is free forever after. The big beds run at a
+// steady 1.28× return per planting (pineapple 512/400, melon 1024/800,
+// watermelon 2048/1600) — which is why the watermelon plant bears two.
+const MIN = 60 * 1000;
+const HOUR = 60 * MIN;
+
+// The first ten minutes are their own design problem. A player who has just
+// bought a farm, planted it and watered it has nothing left to do, and the two
+// starter crops are the whole of what they are waiting on — so those two are
+// paced to the first session and everything from the grape up is left alone,
+// because the long waits ARE the come-back-later texture.
+//
+// For a perennial `growthMs` is already the one-time planting-to-first-crop
+// wait and `cycleMs` the steady state, so the cherry can pay off fast the first
+// time without touching how the orchard runs afterwards. No new column needed.
+export const FARM = [
+  // level is index+1, matching FRUITS.
+  { kind: 'tree', growthMs:  2 * MIN,  cycleMs:  4 * MIN,  yield: 12, cost:   60 }, // cherry
+  { kind: 'bed',  growthMs: 90 * 1000, cycleMs: null,      yield:  6, cost:    6 }, // strawberry
+  { kind: 'vine', growthMs:  6 * MIN,  cycleMs:  5 * MIN,  yield:  8, cost:   25 }, // grape
+  { kind: 'tree', growthMs: 12 * MIN,  cycleMs:  8 * MIN,  yield:  6, cost:   90 }, // dekopon
+  { kind: 'tree', growthMs: 20 * MIN,  cycleMs: 12 * MIN,  yield:  5, cost:  150 }, // persimmon
+  { kind: 'tree', growthMs: 40 * MIN,  cycleMs: 25 * MIN,  yield:  4, cost:  300 }, // apple
+  { kind: 'tree', growthMs: 90 * MIN,  cycleMs: 45 * MIN,  yield:  4, cost:  550 }, // pear
+  { kind: 'tree', growthMs:  3 * HOUR, cycleMs: 90 * MIN,  yield:  3, cost: 1000 }, // peach
+  { kind: 'bed',  growthMs: 24 * HOUR, cycleMs: null,      yield:  2, cost:  400 }, // pineapple
+  { kind: 'bed',  growthMs:  5 * HOUR, cycleMs: null,      yield:  2, cost:  800 }, // melon
+  { kind: 'bed',  growthMs:  8 * HOUR, cycleMs: null,      yield:  2, cost: 1600 }, // watermelon
+];
+
+// The pineapple takes longer than fruit worth four times as much, and that is
+// on purpose: it is the patient farmer's flex, an event rather than an
+// investment. To keep it from being strictly-worse economics, harvesting one
+// also grants a bonus seed of a random unlocked level (js/campaign.js).
+export const PINEAPPLE_LEVEL = 9;
+
+export function farmOf(level) { return FARM[level - 1]; }
+export function isPerennial(level) { return FARM[level - 1].kind !== 'bed'; }
+export function needsTrellis(level) { return FARM[level - 1].kind === 'vine'; }
+export function growthOf(level) { return FARM[level - 1].growthMs; }
+export function cycleOf(level) { return FARM[level - 1].cycleMs; }
+export function yieldOf(level) { return FARM[level - 1].yield; }
+export function seedCostOf(level) { return FARM[level - 1].cost; }
+
+// Every balance knob in the campaign, in one place. WP11 tunes these numbers;
+// nothing else in the campaign carries a magic constant of its own.
+//
+// Generosity-first: `firstRunFloor` exceeds `starterFarmCost` by a seed budget,
+// so the first appraisal always buys the farm AND something to plant in it —
+// the player can never end the opening broke.
+export const TUNING = {
+  giftCrate: { 1: 30, 2: 18, 3: 12, 4: 8, 5: 5 },  // ~apple-reach on an average first run
+  firstRunFloor: 700,          // floor on the FIRST appraisal only
+  starterFarmCost: 500,        // terrace 1 + a young cherry tree + 4 strawberry seeds
+  starterSeeds: { 2: 4 },      // what the starter farm comes planted-ready with
+  starterTree: 1,              // …and the sapling already in its tree plot
+  // …and one bed that comes with the farm already half grown and watered. The
+  // tree teaches the ritual (it arrives thirsty, so the first tap is a
+  // watering); this one keeps its promise while that lesson is still warm,
+  // instead of leaving the new farm three minutes of nothing.
+  starterCrop: 2,
+  starterCropProgress: 0.5,
+  terraceCosts: [0, 500, 1200, 3000, 7500, 18000],  // index 0 is the starter terrace
+  plotsPerTerrace: 4,
+  treePlotsPerTerrace: 1,      // one of the four takes a tree/vine; the rest are beds
+  // ── the merchant's curve ────────────────────────────────────────────────
+  // What a MERGE fetches at market, as a multiple of the fruit's face value.
+  // Campaign only: FRUITS[].score is the arcade table and stays arcade pride.
+  //
+  // The problem it fixes: a pear built from scratch banked ~126元 of cumulative
+  // merge score against 64元 of face value, so merging roughly doubled a fruit's
+  // worth while the effort curve to reach it was far steeper. Small fruit
+  // therefore pay face — merging two cherries is not a feat — and the premium
+  // opens up from the dekopon so that deep merging is what a market day is FOR.
+  //
+  // One entry per level, monotonically non-decreasing (pinned by
+  // tests/economy). Fruit left unmerged on the counter never sees any of this:
+  // it sells at face, which is the whole point of the premium.
+  tierPremium: [1, 1, 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5],
+  // …and what a combo adds on top, per link past the first. A 4-chain pays
+  // ×1.45. Deliberately a bonus rather than the main course: chains are luck
+  // steered by skill, and the tier table is the part the player chooses.
+  chainBonus: 0.15,
+  // How soon a crop has to be ripening for the farm to count as having
+  // something to do. Past it, with an empty crate, the farm's menu button
+  // wears a quiet badge — a friend could use a hand. Not a summons: it retires
+  // the moment there is anything in the crate.
+  friendNudgeMs: 2 * MIN,
+  // The friend's cut of a stall you minded for them (js/economy.js §friendCut).
+  // Deliberately well below a real market day's takings: minding a stall is the
+  // fallback activity for when the crate is empty and nothing is ripe, not the
+  // optimum. It is paid on arcade SCORE at 1:1 — the friend's stall is an
+  // arcade board and the merchant's curve is not theirs to charge.
+  friendCut: 0.2,
+  tidyBonus: 0.10,             // packed / sold-out: fraction of the subtotal
+  seedDripChance: 0.15,        // 0 disables the drip exactly — no epsilon
+  firstUnlockSeeds: 2,         // free packet when a level is first merged in campaign
+  waterMs: 6 * HOUR,           // FLOOR on one watering — see js/farm.js §water:
+                               // a watering always covers at least the rest of
+                               // the current stage, so no crop is ever a
+                               // come-back-and-top-it-up treadmill
+  sprinklerCost: 800,          // per terrace: that terrace is watered forever
+  irrigationCost: 8000,        // whole farm, forever — the "made it" purchase
+  trellisCost: 300,            // per plot, enables vines
+  fertilizerCost: 50,          // consumable: halves the remaining stage time
+};
+
+export const MAX_TERRACES = TUNING.terraceCosts.length;
+
 // Game feel / rules.
 export const RULES = {
   overLineMs: 3000,     // continuous time above deadline ⇒ game over (GRD §5)
@@ -100,4 +264,12 @@ export const RULES = {
   impactEventMs: 150,   // per-body rate limit on bounce events (settling pile
                         // must not spam the juice layer)
   spawnGraceContact: true, // a fruit can't trip the deadline until first contact
+  // A combo is measured in WALL TIME, not in physics ticks. A tick is ~4ms of
+  // sim, so a tick-scoped chain only ever counted merges that were born already
+  // touching — the gravity-fed cascade the player actually watches happen spans
+  // hundreds of ticks and used to be credited as a row of 1-chains. This is the
+  // window between one merge and the next for them to count as the same combo,
+  // and it is generous on purpose: a pile settling into its second merge is the
+  // thing being credited.
+  chainWindowMs: 1800,
 };

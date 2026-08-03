@@ -14,21 +14,46 @@
 
 import { WORLD, RULES, radiusOf } from './constants.js';
 import { inDanger } from './game.js';
-import { dropletAt, floatAt, popScale, squashAmount } from './effects.js';
+import { dropletAt, floatAt, isCheering, popScale, squashAmount } from './effects.js';
 import { paintFruit, expressionFor } from './fruit-art.js';
 import {
-  SCENE, themeOf, paintSky, paintSkyline, paintStall, paintAwning, paintLanterns, paintLeaf,
+  SCENE, PERCH_R, perchAt, themeOf,
+  paintSky, paintSkyline, paintStall, paintAwning, paintLanterns, paintLeaf,
 } from './scene.js';
 
-const EMPTY_FX = { droplets: [], floats: [], pops: new Map(), squashes: new Map() };
+const EMPTY_FX = { droplets: [], floats: [], pops: new Map(), squashes: new Map(), cheeredAt: null };
+
+// A held fruit whose radius reaches the dropper's own height would be drawn
+// crossing the deadline before it was dropped. See drawHeld().
+const CRATED_R = WORLD.dropperY;
 
 // The pile shivers over the last second before the line claims it.
 const TREMBLE_MS = 1000;
 const TREMBLE_MAX = 1;          // world units — deliberately barely-there
 
+// A perched fruit is scenery, not a body, but the blink machinery keys off an
+// id — so it gets a fixed synthetic one. Fixed, so its blinks are the same
+// every session; distinctive, so it never shares a phase with a real body.
+// Built once: the perch is at the same place, at the same size, on every frame
+// of every session, and rebuilding it 60 times a second would be 60 objects a
+// second of pure garbage.
+const PERCHED = { id: 0x9e3779b9 };
+const PERCH = perchAt(PERCH_R);
+
 export function makeRenderer(canvas) {
   const ctx = canvas.getContext('2d');
   let scale = 1, offX = 0, offY = 0;
+  // Who, if anyone, is sitting on the plank watching. HOST CONFIGURATION, not
+  // a mode: this file has no idea what a friend or a campaign is, only that it
+  // has been asked to draw a fruit on the scene's perch. Null draws nothing,
+  // which is every board that has nobody minding it.
+  //
+  // Their MOOD is not here — it decays over time, so it lives on the effects
+  // list with every other decaying visual and arrives through draw().
+  let perchLevel = null;
+  // One options object, mutated in place. drawPerched runs every frame and this
+  // is the only field that ever changes.
+  const perchOpts = { expression: 'neutral' };
 
   // The view is fitted to the world PLUS the stall's side planks, which live
   // just outside it (x < 0 and x > WORLD.width). Fitting the bare world hid
@@ -68,9 +93,12 @@ export function makeRenderer(canvas) {
     paintAwning(ctx, th);
     paintLanterns(ctx, th, tMs, motion);
     paintLeaf(ctx, th, tMs, motion);
+    // On the front apron below the counter — outside the field of play, so
+    // never in the drop path and never something the pile can land on.
+    drawPerched(fx, tMs, settings.reducedMotion);
 
     drawDeadline(g, th, tMs, motion);
-    if (g.state === 'playing') drawGhost(g, th);
+    if (g.state === 'playing' && g.current != null) drawGhost(g, th);
 
     // the pile — trembles as a whole once the line is about to claim it
     const overMs = worstOverMs(g, tMs);
@@ -90,26 +118,44 @@ export function makeRenderer(canvas) {
     drawDroplets(fx, tMs);
     drawFloats(fx, tMs, th, settings);
 
-    // dropper: held fruit + aim guide
-    if (g.state === 'playing') {
+    // dropper: held fruit + aim guide. `current` is null in a campaign run
+    // whose crate has run out — the dropper simply isn't there any more.
+    if (g.state === 'playing' && g.current != null) {
       const r = radiusOf(g.current);
       ctx.strokeStyle = th.guide;
       ctx.lineWidth = 2;
       ctx.setLineDash([4, 8]);
       ctx.beginPath();
-      ctx.moveTo(g.dropX, WORLD.dropperY + r);
+      ctx.moveTo(g.dropX, WORLD.dropperY + Math.min(r, CRATED_R));
       ctx.lineTo(g.dropX, WORLD.floorY);
       ctx.stroke();
       ctx.setLineDash([]);
       ctx.globalAlpha = heldAlpha(g, tMs);
-      ctx.save();
-      ctx.translate(g.dropX, WORLD.dropperY);
-      paintFruit(ctx, g.current, r);
-      ctx.restore();
+      drawHeld(th, g.current, r, g.dropX);
       ctx.globalAlpha = 1;
     }
 
     drawVignette(overMs);
+  }
+
+  // Whoever is minding the stall, on the perch js/scene.js picked. THE
+  // ONE-PAINTER RULE: this is paintFruit like every other fruit in the game,
+  // at the perch's scale, wearing an expression out of expressionFor's own
+  // vocabulary — no second drawing of anything.
+  //
+  // Under reduced motion they are simply present and neutral: expressionFor
+  // already refuses to blink, and js/effects.js refuses to record a cheer at
+  // all — a face that changes is motion however briefly it lasts, and it is
+  // turned away at the same door as everything else that moves.
+  function drawPerched(fx, tMs, reducedMotion) {
+    if (perchLevel == null) return;
+    perchOpts.expression = isCheering(fx, tMs)
+      ? 'happy'
+      : expressionFor(PERCHED, tMs, reducedMotion);
+    ctx.save();
+    ctx.translate(PERCH.x, PERCH.y);
+    paintFruit(ctx, perchLevel, PERCH_R, perchOpts);
+    ctx.restore();
   }
 
   // One body: the caller's pop/squash transform, then the shared painter.
@@ -130,6 +176,37 @@ export function makeRenderer(canvas) {
       angle: motion ? b.angle : 0,
       expression: expressionFor(b, tMs, !motion),
     });
+    ctx.restore();
+  }
+
+  // The held fruit, at the size the dropper zone can actually hold it.
+  //
+  // A watermelon is 90 world units across and the dropper hangs 52 above the
+  // floor of the danger zone, so anything from a pear up would be drawn ACROSS
+  // the deadline while merely being held — the board would look lost before the
+  // player had done anything. Big fruit are therefore drawn CRATED: scaled to
+  // fit, over a true-size dashed ring so the player can still read how much
+  // board the thing is about to take. Physics spawns it at its real size.
+  //
+  // Free play can never reach this: MAX_SPAWN_LEVEL is 5, whose radius is 39.
+  // Only a campaign crate carries fruit this big to a stall.
+  function drawHeld(th, level, r, x) {
+    const crated = r >= CRATED_R;
+    if (crated) {
+      ctx.save();
+      ctx.strokeStyle = th.ghost;
+      ctx.setLineDash([4, 6]);
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(x, WORLD.dropperY, r, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.restore();
+    }
+    ctx.save();
+    ctx.translate(x, WORLD.dropperY);
+    if (crated) ctx.scale(CRATED_R / r, CRATED_R / r);
+    paintFruit(ctx, level, r);
     ctx.restore();
   }
 
@@ -228,7 +305,13 @@ export function makeRenderer(canvas) {
     ctx.fillRect(0, 0, canvas.width, canvas.height);
   }
 
-  return { resize, draw, toWorldX };
+  return {
+    resize, draw, toWorldX,
+    // Who is watching. The host's to decide, and it teaches this file nothing
+    // about modes — their mood rides in on the effects list like every other
+    // decaying visual, so there is no second channel to keep in step.
+    setPerch(level) { perchLevel = level == null ? null : level; },
+  };
 }
 
 // Longest continuous time any fruit has spent over the line, in ms.

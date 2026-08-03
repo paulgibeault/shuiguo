@@ -5,32 +5,81 @@
 // States: 'menu' → 'playing' → 'over'. The turn loop (GRD §1): spawn into the
 // NEXT preview, promote to the dropper, aim, drop, a short input cooldown,
 // merge chains resolve, deadline check, repeat.
+//
+// WHERE THE FRUIT COMES FROM is injectable, and separately, WHETHER IT RUNS
+// OUT. Free play draws forever across levels 1–5 — from the rng by default, or
+// from a friend's weighting of the same five levels, which is still an infinite
+// sky. The campaign hands in a crate-backed draw AND declares itself `crated`:
+// a finite harvest that can hold anything up to a watermelon and returns null
+// when it runs out. That null propagates — the preview empties, then the
+// dropper — and the host reads it as "sold out" and closes the stall.
+//
+// The two were one flag once (an injected dropper WAS a crate), which was fine
+// while the campaign was the only thing injecting one. It is not any more, and
+// conflating them would quietly hand a friend's stall the campaign's rules: a
+// dropper that may hold a watermelon, and a save that believes one.
 
-import { WORLD, RULES, MAX_LEVEL, MAX_SPAWN_LEVEL, ANNIHILATE_SCORE, radiusOf, scoreOf } from './constants.js';
+import { WORLD, RULES, MAX_LEVEL, MAX_SPAWN_LEVEL, PHYS, ANNIHILATE_SCORE, radiusOf, scoreOf } from './constants.js';
 import { makeBody, step } from './physics.js';
 
-export function makeGame({ rng, now }) {
+export function makeGame({ rng, now, drawFruit, crated = false }) {
   const g = {
     state: 'menu',
     bodies: [],
     score: 0,
-    current: 1,          // level held in the dropper
-    next: 1,             // level shown in the preview
+    current: 1,          // level held in the dropper — null once the stock is out
+    next: 1,             // level shown in the preview — empties first
     dropX: WORLD.width / 2,
     canDrop: true,
     lockedAt: null,      // wall-clock ms when input locked (drop happened)
     overAt: null,        // set when the game ends
+    // The combo in flight, on the same clock as `lockedAt`. It lives on the
+    // game rather than inside resolveMerges because a chain is a thing the
+    // PLAYER experiences over a second or so, and resolveMerges is 4ms wide.
+    chainDepth: 0,
+    lastMergeAt: null,
     // per-game tallies the host folds into Arcade.stats at game over
     tally: freshTally(),
     events: [],          // drained by the host each frame → sfx/particles
     rng, now,
+    // A crated game is finite, and it may legitimately hold fruit far bigger
+    // than anything free play ever spawns. Declared by the host rather than
+    // inferred from the dropper, and kept on the instance rather than read off
+    // a save, so a free-play board stays exactly as strict about a hostile save
+    // as it has always been however its fruit are picked.
+    crated: !!crated,
+    draw: typeof drawFruit === 'function' ? drawFruit : () => rollSpawn(rng),
   };
-  g.current = rollSpawn(rng);
-  g.next = rollSpawn(rng);
+  // A menu-state game primes its dropper so the board has something to show
+  // before the first start(), and start() then re-rolls — which costs an
+  // infinite rng stream nothing. A CRATE is stock, though, and priming it would
+  // tip two of the player's harvested fruit onto the floor before the stall
+  // even opened. So a crated game holds nothing until it starts.
+  if (!g.crated) {
+    g.current = g.draw();
+    g.next = g.draw();
+  } else {
+    g.current = null;
+    g.next = null;
+  }
   return g;
 }
 
 function rollSpawn(rng) { return rng.int(1, MAX_SPAWN_LEVEL); }
+
+// The biggest level this game is allowed to hold in the dropper.
+function maxHeld(g) { return g.crated ? MAX_LEVEL : MAX_SPAWN_LEVEL; }
+
+// Nothing left in the hands or the crate. The host finishes the run on this
+// once the pile has settled — see isSettled().
+export function isSoldOut(g) { return g.current == null && g.next == null; }
+
+// Is the board at rest? PHYS.settleSpeed is the same threshold the physics uses
+// to call a scene settled, so "the last fruit has stopped rolling" means the
+// same thing here as it does there.
+export function isSettled(g) {
+  return g.bodies.every((b) => Math.hypot(b.vx, b.vy) < PHYS.settleSpeed);
+}
 
 // `bestLevel` is the biggest fruit this game ever HELD — set by the dropper as
 // well as by merges, so the game-over screen always has a fruit to show even
@@ -43,8 +92,11 @@ function reachedLevel(g, level) {
   if (level > g.tally.bestLevel) g.tally.bestLevel = level;
 }
 
+// A watermelon is half the board wide, and clamping already scales by whatever
+// is held — which is what makes big-fruit crates work without a special case.
+// An empty dropper clamps to the bare walls rather than throwing.
 export function clampDropX(g, x) {
-  const r = radiusOf(g.current);
+  const r = g.current == null ? 0 : radiusOf(g.current);
   return Math.min(WORLD.width - r, Math.max(r, x));
 }
 
@@ -60,20 +112,23 @@ export function start(g) {
   g.canDrop = true;
   g.lockedAt = null;
   g.overAt = null;
+  g.chainDepth = 0;
+  g.lastMergeAt = null;
   g.tally = freshTally();
-  g.current = rollSpawn(g.rng);
-  g.next = rollSpawn(g.rng);
+  g.current = g.draw();
+  g.next = g.draw();
   g.dropX = clampDropX(g, WORLD.width / 2);
   g.events.push({ type: 'start' });
 }
 
 export function drop(g, x) {
   if (g.state !== 'playing' || !g.canDrop) return false;
+  if (g.current == null) return false;            // the crate is empty
   if (typeof x === 'number') aim(g, x);      // tap-to-snap (GRD §4)
   const level = g.current;
   g.bodies.push(makeBody(level, clampDropX(g, g.dropX), WORLD.dropperY));
   g.current = g.next;
-  g.next = rollSpawn(g.rng);
+  g.next = g.draw();
   g.dropX = clampDropX(g, g.dropX);          // new fruit may be fatter — re-clamp
   g.canDrop = false;
   g.lockedAt = g.now();
@@ -113,11 +168,29 @@ function emitImpacts(g, impacts) {
   }
 }
 
+// The combo counter, advanced once per merge and measured against the wall
+// clock. Inside RULES.chainWindowMs of the previous merge this is the same
+// combo and deepens; outside it, a new one starts at 1. The value returned is
+// the 1-based depth that rides on the event — the semantics `completedChains`
+// in js/progress.js already reads, so a 1,2,3,1,2 batch still means what it
+// always did.
+//
+// chainBest is banked HERE rather than at the end of the tick, because a
+// windowed combo can still be in flight when the tick (and the frame, and the
+// batch the host drains) ends.
+function bumpChain(g, t) {
+  const continuing = g.lastMergeAt != null && t - g.lastMergeAt < RULES.chainWindowMs;
+  g.chainDepth = continuing ? g.chainDepth + 1 : 1;
+  g.lastMergeAt = t;
+  if (g.chainDepth > g.tally.chainBest) g.tally.chainBest = g.chainDepth;
+  return g.chainDepth;
+}
+
 // Merge every contacting same-level pair, then keep scanning so a freshly
 // spawned fruit chains in the SAME tick (GRD §3 "instantly process its own
-// collision check").
+// collision check"). Same-tick cascades are still cascades — they simply are
+// not the only ones any more.
 function resolveMerges(g, firstContacts) {
-  let chain = 0;
   let pairs = firstContacts;
   const dead = new Set();
   const t = g.now();
@@ -127,13 +200,16 @@ function resolveMerges(g, firstContacts) {
       dead.add(a.id); dead.add(b.id);
       const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
       g.bodies = g.bodies.filter((o) => o !== a && o !== b);
-      chain++;
+      const chain = bumpChain(g, t);
       g.tally.merges++;
       if (a.level === MAX_LEVEL) {
-        // watermelon + watermelon: mutual destruction, max points, no spawn
+        // watermelon + watermelon: mutual destruction, max points, no spawn.
+        // It carries `chain` for the same reason a merge does — the campaign
+        // pays a chain multiplier on it (js/economy.js), and the biggest thing
+        // the board can do must not be the one merge that drops out of a combo.
         g.score += ANNIHILATE_SCORE;
         g.tally.annihilations++;
-        g.events.push({ type: 'annihilate', x: mx, y: my, score: ANNIHILATE_SCORE });
+        g.events.push({ type: 'annihilate', x: mx, y: my, score: ANNIHILATE_SCORE, chain });
         continue;
       }
       const born = a.level + 1;
@@ -158,7 +234,6 @@ function resolveMerges(g, firstContacts) {
       }
     }
   }
-  if (chain > g.tally.chainBest) g.tally.chainBest = chain;
 }
 
 // The line of death (GRD §5): any fruit whose top sits above the deadline for
@@ -171,12 +246,28 @@ function checkDeadline(g) {
     if (!over) { b.overSince = null; continue; }
     if (b.overSince == null) b.overSince = t;
     if (t - b.overSince >= RULES.overLineMs) {
-      g.state = 'over';
-      g.overAt = t;
-      g.events.push({ type: 'gameover', score: g.score });
+      finish(g, 'toppled');
       return;
     }
   }
+}
+
+// End the run, whatever ended it. Every ending is a sale (design pillar): the
+// reason rides on the event so the campaign's appraisal can pay a Tidy Stall
+// bonus for the two deliberate ones, and free play can go on ignoring it.
+//
+//   'toppled'   the deadline rule, unchanged and the default
+//   'packed'    the player pressed Pack Up
+//   'sold-out'  the crate and both hands are empty
+//
+// Idempotent: a pile that topples on the same frame the last fruit is sold can
+// only close the stall once.
+export function finish(g, reason = 'toppled') {
+  if (g.state !== 'playing') return false;
+  g.state = 'over';
+  g.overAt = g.now();
+  g.events.push({ type: 'gameover', score: g.score, reason });
+  return true;
 }
 
 // Is anything currently in the danger zone? (renderer pulses the line)
@@ -188,6 +279,13 @@ export function inDanger(g) {
 // Everything needed to put a mid-game board back: fruit kinematics, the
 // dropper queue, the score, and the rng state so future spawns continue the
 // same sequence.
+//
+// What is deliberately NOT here: the combo in flight. `lastMergeAt` is a
+// performance.now() reading and means nothing in the session that reads it
+// back, and a wall-time window has no honest way to survive an app that was
+// closed for a week. So a restored run starts with no combo — forfeiting a
+// mid-combo on suspend is a stated property of the rule, not an oversight.
+// `tally.chainBest` rides along as it always has: the deep chain HAPPENED.
 
 export function serialize(g) {
   if (g.state !== 'playing') return null;
@@ -202,10 +300,22 @@ export function serialize(g) {
   };
 }
 
+// What may sit in the dropper of THIS game, out of a save. The bound is the
+// instance's, not the file's: free play still refuses anything it could never
+// have spawned, and a crated game additionally accepts the empty hand that
+// means the harvest ran out mid-run.
+function validHeld(g, v) {
+  if (v === null) return g.crated;
+  return Number.isInteger(v) && v >= 1 && v <= maxHeld(g);
+}
+
 export function restore(g, save) {
   if (!save || save.v !== 1 || !Array.isArray(save.fruits)) return false;
-  if (!Number.isInteger(save.current) || save.current < 1 || save.current > MAX_SPAWN_LEVEL) return false;
-  if (!Number.isInteger(save.next) || save.next < 1 || save.next > MAX_SPAWN_LEVEL) return false;
+  if (!validHeld(g, save.current)) return false;
+  if (!validHeld(g, save.next)) return false;
+  // …and the hands empty in order: the preview goes first, so a save holding
+  // nothing with a fruit still queued behind it never happened.
+  if (save.current === null && save.next !== null) return false;
   const fruits = [];
   for (const f of save.fruits) {
     if (!Array.isArray(f) || f.length < 3) return false;
@@ -239,6 +349,8 @@ export function restore(g, save) {
   g.canDrop = true;
   g.lockedAt = null;
   g.overAt = null;
+  g.chainDepth = 0;
+  g.lastMergeAt = null;
   g.dropX = clampDropX(g, WORLD.width / 2);
   return true;
 }

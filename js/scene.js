@@ -55,6 +55,34 @@ export function themeOf(settings) {
   return THEMES[settings && settings.theme === 'dark' ? 'dark' : 'light'];
 }
 
+// Where a friend sits while they watch you work: on the stall's front apron,
+// BELOW the counter, down at the bottom-left like somebody on a stool at the
+// end of the stand.
+//
+// Below the counter is the one place on this stall that is never the board.
+// The first perch was the top of the left plank — level with the deadline,
+// which put the friend square in the drop path: aim left and the held fruit,
+// the ghost line and the falling fruit all passed through their face. Nothing
+// the physics ever touches goes below WORLD.floorY, so down here the friend
+// can never conflict with play, only keep it company.
+//
+// The apron is painted as far down as the canvas goes (paintStall's
+// under-counter fill), and the world is letterboxed top-and-bottom on every
+// portrait viewport — so the seat is visible wherever the game is actually
+// played, and in a very short landscape window the friend is simply below the
+// crop instead of in the way. Returns the fruit's CENTRE.
+export function perchAt(r) {
+  return { x: SCENE.wall + r * 1.1, y: WORLD.floorY + SCENE.wall + 5 + r };
+}
+
+// How big a perched friend is drawn, in world units. Sized off the plank
+// rather than off the fruit's own radius, so every friend in the cast perches
+// at the same scale whatever they are — and small enough that at this x the
+// whole of them stays inside the view, which ends one plank past the wall.
+// tests/scene pins that; a friend clipped in half by the bezel is the bug this
+// number exists to not have.
+export const PERCH_R = SCENE.wall * 1.8;
+
 // ── precomputed static geometry ────────────────────────────────────────────
 
 function lcg(seed) {
