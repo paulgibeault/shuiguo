@@ -36,12 +36,22 @@ const CHIP_SHARE = 0.3;
  *   enabled  false greys it and takes it out of the tab order
  *   onPick   what pressing it does
  *   note     a second, quieter line (held counts, flavour)
+ *   title    what to call it when that is not the fruit's own name
+ *   alt      …and the learning line under it
+ *
+ * The wholesaler is drawn as a watermelon and is not called Watermelon, which
+ * is the whole reason those last two exist.
  */
 // English leads: the name the player can read is the big line, and the
 // hanzi + pinyin ride underneath as the learning flavor. The card still
 // teaches both languages — it just never makes the label a puzzle.
-export function fruitCard({ level, meta = '', enabled = true, onPick, note = '' }) {
-  const f = FRUITS[level - 1];
+export function fruitCard({ level, meta = '', enabled = true, onPick, note = '', title = '', alt = '' }) {
+  const fruit = FRUITS[level - 1];
+  const f = {
+    ...fruit,
+    name: title || fruit.name,
+    label: alt || `${fruit.hanzi} ${fruit.pinyin}`,
+  };
   const cell = document.createElement('button');
   cell.type = 'button';
   cell.className = enabled ? 'seed-card' : 'seed-card off';
@@ -52,11 +62,11 @@ export function fruitCard({ level, meta = '', enabled = true, onPick, note = '' 
     '<span class="seed-name"></span><span class="seed-alt"></span>' +
     '<span class="seed-price"></span><span class="seed-held"></span>';
   cell.querySelector('.seed-name').textContent = f.name;
-  cell.querySelector('.seed-alt').textContent = `${f.hanzi} ${f.pinyin}`;
+  cell.querySelector('.seed-alt').textContent = f.label;
   cell.querySelector('.seed-price').textContent = meta;
   cell.querySelector('.seed-held').textContent = note;
   cell.querySelector('.chip-art').setAttribute('aria-label', f.name);
-  cell.setAttribute('aria-label', `${f.name} ${f.hanzi} ${f.pinyin}${meta ? `, ${meta}` : ''}`);
+  cell.setAttribute('aria-label', `${f.name} ${f.label}${meta ? `, ${meta}` : ''}`);
   if (onPick) cell.addEventListener('click', onPick);
   cell.dataset.level = String(level);
   return cell;

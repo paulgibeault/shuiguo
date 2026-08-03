@@ -80,19 +80,55 @@ export const FACES = [
 //
 // The table is the invitation to grow this later. The proud 菠萝 running a
 // pineapple-only gag stall is sitting right there.
+// `restockMs` is how long that friend's farm needs to pick the NEXT morning,
+// counted from the moment their last one was sold — the limit of one grower's
+// land, said in the only unit the game has for it. Its shape is the farm table
+// below, one tier up: a strawberry bed comes back inside a session, an apple
+// tree takes its time. It can never leave a player with nothing to do, because
+// the wholesaler has no such clock and is always open (see WHOLESALER).
 export const FRIENDS = [
-  // level: the friend IS this fruit. weights: how their crate of the sky is
-  // stocked, over spawn levels 1..5. flavor: one word, both languages.
+  // level: the friend IS this fruit. weights: how their crate is stocked, over
+  // spawn levels 1..5. crate: how much of it there is — a friend's crate is a
+  // MORNING'S PRODUCE, so it is finite, and running it out is one of the two
+  // ways to close their stall neatly. flavor: one word, both languages.
   //
-  // Even weights are what make a stall COMPARABLE, which is why 草莓's is the
-  // only one whose runs post to the records (js/friends.js §isBalanced) — a
-  // cozy-stall high score would be a lie on the board.
-  { level: 2, weights: [1, 1, 1, 1, 1], flavor: 'Balanced 平衡' },   // 草莓 — the first friend, and always open
-  { level: 3, weights: [3, 3, 2, 1, 0], flavor: 'Cozy 悠闲' },       // 葡萄 — small fruit, long runs, chain paradise
-  { level: 6, weights: [0, 1, 1, 2, 3], flavor: 'Risky 冒险' },      // 苹果 — big stock, the board fills fast and pays fast
+  // Crate size is the other half of each stall's character, and it is tuned
+  // against the flavour rather than levelled: 葡萄 rains small fruit that merges
+  // away, so their morning is long; 苹果 sends down big ones that fill the board,
+  // so theirs is short and fierce.
+  { level: 2, weights: [1, 1, 1, 1, 1], crate: 60, restockMs:  8 * 60 * 1000, flavor: 'Balanced 平衡' },   // 草莓 — the first friend, and always open
+  { level: 3, weights: [3, 3, 2, 1, 0], crate: 80, restockMs: 15 * 60 * 1000, flavor: 'Cozy 悠闲' },       // 葡萄 — small fruit, long runs, chain paradise
+  { level: 6, weights: [0, 1, 1, 2, 3], crate: 45, restockMs: 25 * 60 * 1000, flavor: 'Risky 冒险' },      // 苹果 — big stock, the board fills fast and pays fast
 ];
 
 export const MAX_LEVEL = FRUITS.length;               // 11
+
+// The wholesaler, and the reason the friends' crates are allowed to be finite.
+//
+// Somebody in this valley sells fruit by the lorry-load, and what they will sell
+// you is a crate that never empties — which is the endless board this game
+// shipped with, kept intact and given a door of its own. `crate: 0` IS the
+// endlessness (js/friends.js §isEndless): a stall with no morning's produce
+// behind it draws from the sky forever.
+//
+// They are the watermelon because a friend IS a fruit and the top of the chain
+// is the one nobody grows in their back garden. They take the same share of the
+// till as any friend — an endless crate is stock somebody fronted you, not a
+// gift — and being evenly stocked AND endless, theirs is the one board whose
+// scores are comparable with everybody else's (js/friends.js §isRanked).
+//
+// No `restockMs`, and there could not be one: nobody's field is behind that
+// crate, so there is nothing to wait for it to grow. That is what makes the
+// friends' clocks safe to have at all — however many stalls are picking again,
+// this door is open (js/friends.js §restockMsOf).
+export const WHOLESALER = {
+  level: MAX_LEVEL,
+  weights: [1, 1, 1, 1, 1],
+  crate: 0,
+  title: 'Wholesaler',
+  alt: '批发商 pīfāshāng',
+  flavor: 'Endless 无限',
+};
 export const MAX_SPAWN_LEVEL = 5;                     // only 1..5 drop randomly
 // Two watermelons annihilate — the ultimate merge. Continue the doubling.
 export const ANNIHILATE_SCORE = 2048;

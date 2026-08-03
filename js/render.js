@@ -27,6 +27,14 @@ const EMPTY_FX = { droplets: [], floats: [], pops: new Map(), squashes: new Map(
 // crossing the deadline before it was dropped. See drawHeld().
 const CRATED_R = WORLD.dropperY;
 
+// A portrait viewport is taller than the world's own aspect, so the fit leaves
+// slack above and below the world. It used to be split evenly, and both halves
+// were dead sky. Both are STALL now — canopy above (paintAwning runs up to the
+// canvas edge), apron below (paintStall fills under the counter) — and the
+// split is weighted to the apron, because the canopy is the designed shape and
+// stretching it to a third of a phone screen makes the stall all hat.
+const TOP_SHARE = 0.34;
+
 // The pile shivers over the last second before the line claims it.
 const TREMBLE_MS = 1000;
 const TREMBLE_MAX = 1;          // world units — deliberately barely-there
@@ -61,14 +69,27 @@ export function makeRenderer(canvas) {
   // phone in portrait, i.e. the way the game is actually played.
   const VIEW_W = WORLD.width + 2 * SCENE.wall;
 
+  // A band along the foot of the canvas that the WORLD may not use, in CSS px.
+  // The counter (the crate and Pack up) floats over it, and the alternative is
+  // what the host cannot fix from CSS: on a window whose leftover height is
+  // thinner than that bar, the bar stands on the pile. The band is not
+  // letterboxed away — paintStall's apron runs on under it — so on the tall
+  // viewports where width binds the fit anyway, reserving it costs nothing at
+  // all. HOST CONFIGURATION, like the perch: this file is told the number.
+  let bottomInset = 0;
+
   function resize() {
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     const rect = canvas.getBoundingClientRect();
     canvas.width = Math.round(rect.width * dpr);
     canvas.height = Math.round(rect.height * dpr);
-    scale = Math.min(canvas.width / VIEW_W, canvas.height / WORLD.height);
+    // Floored at half the canvas: the band is a measurement of the DOM, and a
+    // measurement taken mid-layout (or against a stub) must not be able to
+    // squeeze the board down to nothing.
+    const usable = Math.max(canvas.height / 2, canvas.height - bottomInset * dpr);
+    scale = Math.min(canvas.width / VIEW_W, usable / WORLD.height);
     offX = (canvas.width - VIEW_W * scale) / 2 + SCENE.wall * scale;
-    offY = (canvas.height - WORLD.height * scale) / 2;
+    offY = (usable - WORLD.height * scale) * TOP_SHARE;
   }
 
   // canvas-space x for a world x (used by input to invert)
@@ -90,7 +111,10 @@ export function makeRenderer(canvas) {
     // its lanterns, then one drifting leaf — all of it behind every fruit.
     paintSkyline(ctx, th);
     paintStall(ctx, th);
-    paintAwning(ctx, th);
+    // The canopy hangs from the top of the CANVAS, not from the top of the
+    // world: a portrait viewport letterboxes the world vertically, and a band
+    // of awning floating on the leftover sky read as a seam under the header.
+    paintAwning(ctx, th, -offY / scale);
     paintLanterns(ctx, th, tMs, motion);
     paintLeaf(ctx, th, tMs, motion);
     // On the front apron below the counter — outside the field of play, so
@@ -311,6 +335,10 @@ export function makeRenderer(canvas) {
     // about modes — their mood rides in on the effects list like every other
     // decaying visual, so there is no second channel to keep in step.
     setPerch(level) { perchLevel = level == null ? null : level; },
+    // How much of the foot of the canvas the host's own chrome is standing on.
+    // Takes effect at the next resize(), which is where every other measurement
+    // of the box is taken.
+    setBottomInset(cssPx) { bottomInset = cssPx > 0 ? cssPx : 0; },
   };
 }
 

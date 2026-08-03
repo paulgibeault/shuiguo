@@ -7,28 +7,55 @@
 // merge chains resolve, deadline check, repeat.
 //
 // WHERE THE FRUIT COMES FROM is injectable, and separately, WHETHER IT RUNS
-// OUT. Free play draws forever across levels 1–5 — from the rng by default, or
-// from a friend's weighting of the same five levels, which is still an infinite
-// sky. The campaign hands in a crate-backed draw AND declares itself `crated`:
-// a finite harvest that can hold anything up to a watermelon and returns null
-// when it runs out. That null propagates — the preview empties, then the
-// dropper — and the host reads it as "sold out" and closes the stall.
+// OUT, and separately again, HOW BIG IT MAY BE. Three facts, three flags, and
+// every combination of them is a stall somebody actually mints:
 //
-// The two were one flag once (an injected dropper WAS a crate), which was fine
-// while the campaign was the only thing injecting one. It is not any more, and
-// conflating them would quietly hand a friend's stall the campaign's rules: a
-// dropper that may hold a watermelon, and a save that believes one.
+//   `draw`    the dropper. The rng by default; a stall's weighting of levels
+//             1–5; a crate that hands back what is left of a real harvest.
+//   `finite`  the stock can run out. The draw returns null, that null
+//             propagates — the preview empties, then the dropper — and the host
+//             reads it as "sold out" and closes the stall. Every crate is
+//             finite: the campaign's harvest and a friend's morning produce
+//             alike. The wholesaler's endless sky is not.
+//   `crated`  the dropper may hold anything up to a watermelon, because a
+//             campaign harvest legitimately contains one. A friend's crate holds
+//             only what a sky can send down, so it stays as strict as free play
+//             about what a save may put in the player's hand.
+//
+// They were one flag once (an injected dropper WAS a crate), which was fine
+// while the campaign was the only thing injecting one, and conflating any two of
+// them now would quietly hand a friend's stall the campaign's rules.
+//
+// The preview is a QUEUE several deep: the player sees what the crate is about
+// to hand them for the next few drops, which is what makes a finite crate a
+// thing you can plan against rather than a thing that surprises you. `next` is
+// the head of it, and stays a field-shaped read because that is what every HUD
+// and every save has always called it.
 
 import { WORLD, RULES, MAX_LEVEL, MAX_SPAWN_LEVEL, PHYS, ANNIHILATE_SCORE, radiusOf, scoreOf } from './constants.js';
 import { makeBody, step } from './physics.js';
 
-export function makeGame({ rng, now, drawFruit, crated = false }) {
+// How far ahead the player can see. Seven, which is what a phone's width holds
+// on the rail without shrinking the icons to confetti — the ceiling is the line
+// of icons, not the plan. It was five while the rail was shared with the crate;
+// the crate moved down to the counter and took its half of the strip with it.
+//
+// Raising this is backwards compatible in both directions: a save written at a
+// shallower depth is topped up on restore, and a save written deeper than the
+// game currently shows is refused rather than truncated (§restore).
+export const QUEUE_DEPTH = 7;
+
+export function makeGame({ rng, now, drawFruit, crated = false, finite = crated }) {
   const g = {
     state: 'menu',
     bodies: [],
     score: 0,
     current: 1,          // level held in the dropper — null once the stock is out
-    next: 1,             // level shown in the preview — empties first
+    queue: [],           // what is coming, head first — empties before the hand
+    // The head of the queue, under the name the HUDs and every save on disk
+    // already use. A read, not a field: two places to store the same fruit is
+    // two places for them to disagree.
+    get next() { return this.queue.length ? this.queue[0] : null; },
     dropX: WORLD.width / 2,
     canDrop: true,
     lockedAt: null,      // wall-clock ms when input locked (drop happened)
@@ -48,31 +75,57 @@ export function makeGame({ rng, now, drawFruit, crated = false }) {
     // a save, so a free-play board stays exactly as strict about a hostile save
     // as it has always been however its fruit are picked.
     crated: !!crated,
+    finite: !!finite || !!crated,
     draw: typeof drawFruit === 'function' ? drawFruit : () => rollSpawn(rng),
   };
   // A menu-state game primes its dropper so the board has something to show
   // before the first start(), and start() then re-rolls — which costs an
   // infinite rng stream nothing. A CRATE is stock, though, and priming it would
-  // tip two of the player's harvested fruit onto the floor before the stall
-  // even opened. So a crated game holds nothing until it starts.
-  if (!g.crated) {
+  // tip six of the player's harvested fruit onto the floor before the stall even
+  // opened. So a finite game holds nothing until it starts.
+  if (!g.finite) {
     g.current = g.draw();
-    g.next = g.draw();
+    fillQueue(g);
   } else {
     g.current = null;
-    g.next = null;
   }
   return g;
 }
 
 function rollSpawn(rng) { return rng.int(1, MAX_SPAWN_LEVEL); }
 
+/**
+ * Re-point the dropper at a different source of fruit.
+ *
+ * The board is not touched — this is stock, not state. It exists because one
+ * host mints one game and then minds several different stalls with it (a
+ * friend's crate this morning, the wholesaler's endless sky this evening), and
+ * "where the fruit comes from" and "can it run out" have to travel together or
+ * a save restored against the wrong one is believed on the wrong terms.
+ */
+export function setStock(g, { draw, finite = false } = {}) {
+  if (typeof draw === 'function') g.draw = draw;
+  g.finite = !!finite || !!g.crated;
+  return g;
+}
+
+// Top the preview up to depth, and stop the moment the stock says there is no
+// more. A null from an endless draw would be a bug in the host, and is treated
+// exactly the same way — an empty queue is always honest.
+function fillQueue(g) {
+  while (g.queue.length < QUEUE_DEPTH) {
+    const level = g.draw();
+    if (level == null) return;
+    g.queue.push(level);
+  }
+}
+
 // The biggest level this game is allowed to hold in the dropper.
 function maxHeld(g) { return g.crated ? MAX_LEVEL : MAX_SPAWN_LEVEL; }
 
 // Nothing left in the hands or the crate. The host finishes the run on this
 // once the pile has settled — see isSettled().
-export function isSoldOut(g) { return g.current == null && g.next == null; }
+export function isSoldOut(g) { return g.current == null && g.queue.length === 0; }
 
 // Is the board at rest? PHYS.settleSpeed is the same threshold the physics uses
 // to call a scene settled, so "the last fruit has stopped rolling" means the
@@ -115,8 +168,9 @@ export function start(g) {
   g.chainDepth = 0;
   g.lastMergeAt = null;
   g.tally = freshTally();
+  g.queue.length = 0;
   g.current = g.draw();
-  g.next = g.draw();
+  fillQueue(g);
   g.dropX = clampDropX(g, WORLD.width / 2);
   g.events.push({ type: 'start' });
 }
@@ -127,8 +181,8 @@ export function drop(g, x) {
   if (typeof x === 'number') aim(g, x);      // tap-to-snap (GRD §4)
   const level = g.current;
   g.bodies.push(makeBody(level, clampDropX(g, g.dropX), WORLD.dropperY));
-  g.current = g.next;
-  g.next = g.draw();
+  g.current = g.queue.length ? g.queue.shift() : null;
+  fillQueue(g);
   g.dropX = clampDropX(g, g.dropX);          // new fruit may be fatter — re-clamp
   g.canDrop = false;
   g.lockedAt = g.now();
@@ -287,6 +341,11 @@ export function inDanger(g) {
 // mid-combo on suspend is a stated property of the rule, not an oversight.
 // `tally.chainBest` rides along as it always has: the deep chain HAPPENED.
 
+// `queue` is additive and the save version stays 1: a board written before the
+// preview went deep carries only `next`, which is its whole queue. It matters
+// most for a CRATE — every fruit in the preview was taken out of the harvest at
+// draw time, so a save that dropped them on the floor would quietly eat a
+// queue's worth of the player's fruit every suspend.
 export function serialize(g) {
   if (g.state !== 'playing') return null;
   return {
@@ -294,6 +353,7 @@ export function serialize(g) {
     score: g.score,
     current: g.current,
     next: g.next,
+    queue: g.queue.slice(),
     rngState: g.rng.getState(),
     tally: g.tally,
     fruits: g.bodies.map((b) => [b.level, Math.round(b.x * 10) / 10, Math.round(b.y * 10) / 10]),
@@ -305,17 +365,33 @@ export function serialize(g) {
 // have spawned, and a crated game additionally accepts the empty hand that
 // means the harvest ran out mid-run.
 function validHeld(g, v) {
-  if (v === null) return g.crated;
+  if (v === null) return g.finite;
   return Number.isInteger(v) && v >= 1 && v <= maxHeld(g);
+}
+
+// The preview a save is asking us to believe. An explicit `queue` wins; without
+// one, `next` IS the queue, which is what every board written before the preview
+// went deep carries. Anything with a hole in it — a null in the middle, a
+// level this game could never spawn, more fruit than the preview can hold — is
+// not repaired, it is refused.
+function restoredQueue(g, save) {
+  const raw = Array.isArray(save.queue) ? save.queue : (save.next == null ? [] : [save.next]);
+  if (raw.length > QUEUE_DEPTH) return null;
+  for (const level of raw) {
+    if (!Number.isInteger(level) || level < 1 || level > maxHeld(g)) return null;
+  }
+  return raw.slice();
 }
 
 export function restore(g, save) {
   if (!save || save.v !== 1 || !Array.isArray(save.fruits)) return false;
   if (!validHeld(g, save.current)) return false;
   if (!validHeld(g, save.next)) return false;
+  const queue = restoredQueue(g, save);
+  if (queue === null) return false;
   // …and the hands empty in order: the preview goes first, so a save holding
   // nothing with a fruit still queued behind it never happened.
-  if (save.current === null && save.next !== null) return false;
+  if (save.current === null && queue.length > 0) return false;
   const fruits = [];
   for (const f of save.fruits) {
     if (!Array.isArray(f) || f.length < 3) return false;
@@ -330,7 +406,7 @@ export function restore(g, save) {
   g.bodies = fruits;
   g.score = typeof save.score === 'number' && isFinite(save.score) ? Math.max(0, Math.floor(save.score)) : 0;
   g.current = save.current;
-  g.next = save.next;
+  g.queue = queue;
   g.tally = { ...freshTally(), ...(save.tally || {}) };
   // bestLevel indexes FRUITS, so unlike the other counters it must be sound
   // even from a hostile save. It is also additive — saves written before it
@@ -346,6 +422,11 @@ export function restore(g, save) {
   g.tally.bestLevel = Number.isInteger(saved) && saved >= 0 && saved <= MAX_LEVEL ? saved : 0;
   for (const b of g.bodies) reachedLevel(g, b.level);
   if (typeof save.rngState === 'number') g.rng.setState(save.rngState);
+  // Top the preview back up — after the rng state, so an endless board draws
+  // exactly the fruit it was always going to draw, only a little earlier. A
+  // shallow save (or one written before the queue existed) fills here; a crate
+  // that has run dry fills with nothing, and the run is sold out as it was.
+  fillQueue(g);
   g.canDrop = true;
   g.lockedAt = null;
   g.overAt = null;

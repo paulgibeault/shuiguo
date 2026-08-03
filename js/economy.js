@@ -107,9 +107,16 @@ export function appraise({ earnings = 0, boardLevels = [], reason = 'toppled', i
 // The cut then keeps a fraction of that, which is what makes minding a stall
 // the fallback activity rather than the optimum — the answer to an empty crate
 // and nothing ripening, not a replacement for a market day.
-export function friendCut(score) {
+//
+// `reason` earns the Tidy Stall on exactly the same two endings a market day
+// does, and on the SPLIT rather than on the score: the score is arcade pride
+// and has to stay comparable between one board and the next, while the money is
+// the campaign's and is free to reward putting somebody else's stall away
+// neatly. Defaulting to 'toppled' keeps the plain one-argument call honest.
+export function friendCut(score, reason = 'toppled') {
   const earned = Math.max(0, Math.floor(score) || 0);
-  return Math.floor(earned * TUNING.friendCut);
+  const cut = Math.floor(earned * TUNING.friendCut);
+  return isTidy(reason) ? cut + Math.round(cut * TUNING.tidyBonus) : cut;
 }
 
 // ── prices ─────────────────────────────────────────────────────────────────

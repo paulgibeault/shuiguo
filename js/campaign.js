@@ -19,57 +19,27 @@
 //   PLANT a level is earned only by merging one in a campaign run — otherwise a
 //   single lucky free-play game would skip the whole progression.
 
-import { TUNING, MAX_LEVEL, PINEAPPLE_LEVEL } from './constants.js';
+import { TUNING, PINEAPPLE_LEVEL } from './constants.js';
 import { isDiscoverable } from './progress.js';
 import {
   makeStarterFarm, msUntilNextRipe, serialize as serializeFarm, restore as restoreFarm,
 } from './farm.js';
+import {
+  emptyCounts, isLevel, countOf, totalCount, levelsIn, addCount, takeCount,
+  packCounts, unpackCounts,
+} from './counts.js';
+
+// The crate and the seed drawer are both level→n multisets, and the structure
+// itself lives in js/counts.js so free play can hold one without importing the
+// campaign. These four are the verbs this module's own callers already knew, so
+// they stay part of its surface.
+export { countOf, totalCount, levelsIn, drawFromCrate } from './counts.js';
 
 const SAVE_VERSION = 1;
 
 // The cherry is the one seed nobody has to earn: it is what the starter farm is
 // planted with, and merging is how every other level is unlocked.
 export const STARTER_SEED = 1;
-
-// ── counts: the crate and the seed drawer are both level→n multisets ────────
-
-function emptyCounts() { return Object.create(null); }
-
-export function countOf(counts, level) {
-  const n = counts[level];
-  return Number.isInteger(n) && n > 0 ? n : 0;
-}
-
-export function totalCount(counts) {
-  let n = 0;
-  for (const level of Object.keys(counts)) n += countOf(counts, level);
-  return n;
-}
-
-// Levels present, low to high — the order every chip strip is drawn in.
-export function levelsIn(counts) {
-  return Object.keys(counts)
-    .map(Number)
-    .filter((level) => countOf(counts, level) > 0)
-    .sort((a, b) => a - b);
-}
-
-function addCount(counts, level, n) {
-  if (!isLevel(level) || !Number.isInteger(n) || n <= 0) return false;
-  counts[level] = countOf(counts, level) + n;
-  return true;
-}
-
-function takeCount(counts, level, n = 1) {
-  if (countOf(counts, level) < n) return false;
-  const left = counts[level] - n;
-  if (left > 0) counts[level] = left; else delete counts[level];
-  return true;
-}
-
-function isLevel(level) {
-  return Number.isInteger(level) && level >= 1 && level <= MAX_LEVEL;
-}
 
 // ── the campaign ───────────────────────────────────────────────────────────
 //
@@ -148,21 +118,17 @@ export function harvestInto(c, picked, rng) {
   return { level: picked.level, count: picked.count, bonusSeed };
 }
 
-// The dropper's finite stock. Draws weighted by what is left — the same feel as
-// the free-play rng dropper, out of a crate that empties — and returns null once
-// it is empty, which is what propagates through js/game.js to end the run.
-export function drawFromCrate(crate, rng) {
-  const total = totalCount(crate);
-  if (total <= 0) return null;
-  let pick = Math.floor(rng() * total);
-  if (!(pick >= 0)) pick = 0;
-  if (pick >= total) pick = total - 1;
-  for (const level of levelsIn(crate)) {
-    const n = countOf(crate, level);
-    if (pick < n) { takeCount(crate, level, 1); return level; }
-    pick -= n;
-  }
-  return null;   // unreachable while totalCount agrees with the keys
+// Unsold fruit, back in the crate.
+//
+// The dropper takes its whole preview out of the harvest the moment the stall
+// opens — the fruit in hand plus the queue above the awning — so a day that
+// ends with any of it unsold has to put it back, or the preview would quietly
+// tax every early pack-up by six fruit. Junk levels are dropped rather than
+// repaired, as everywhere.
+export function returnToCrate(c, levels) {
+  let put = 0;
+  for (const level of levels || []) if (addCount(c.crate, level, 1)) put++;
+  return put;
 }
 
 // ── unlocks and the seed drip ──────────────────────────────────────────────
@@ -279,24 +245,6 @@ export function couldUseAHand(c, wallNow) {
 // earned beyond what the table itself allows.
 
 const PHASES = new Set(['gift-run', 'buy-farm', 'open']);
-
-function packCounts(counts) {
-  const out = {};
-  for (const level of levelsIn(counts)) out[level] = countOf(counts, level);
-  return out;
-}
-
-function unpackCounts(raw) {
-  const counts = emptyCounts();
-  if (!raw || typeof raw !== 'object') return counts;
-  for (const key of Object.keys(raw)) {
-    const level = Number(key);
-    const n = raw[key];
-    // Integer keys only, and a cap: a crate is a crate, not a shipping container.
-    if (isLevel(level) && Number.isInteger(n) && n > 0 && n <= 9999) counts[level] = n;
-  }
-  return counts;
-}
 
 export function serialize(c) {
   return {

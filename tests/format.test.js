@@ -3,7 +3,7 @@
 // promise that is off by a second the wrong way is a promise that gets caught.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { countdown, money, multiplier } from '../js/format.js';
+import { countdown, span, money, multiplier } from '../js/format.js';
 
 const SEC = 1000;
 const MIN = 60 * SEC;
@@ -35,6 +35,26 @@ test('it never says ready before it is', () => {
 test('ready, and nonsense, are both 0:00 rather than an error', () => {
   for (const junk of [0, -1, -HOUR, NaN, Infinity, -Infinity, null, undefined, '90', {}]) {
     assert.equal(countdown(junk), '0:00', `countdown(${String(junk)})`);
+  }
+});
+
+// The collection book's numbers are FACTS about a fruit, not clocks running
+// down — "a pineapple takes 24 h" is the joke, and 24:00 reads as something
+// somebody has to sit through.
+test('a span is a fact, in the largest unit that fits', () => {
+  assert.equal(span(45 * SEC), '45s');
+  assert.equal(span(90 * SEC), '1.5 min');          // the strawberry bed
+  assert.equal(span(20 * MIN), '20 min');
+  assert.equal(span(90 * MIN), '1.5 h');
+  assert.equal(span(3 * HOUR), '3 h');
+  assert.equal(span(24 * HOUR), '24 h');            // the pineapple, still the joke
+});
+
+test('a span never trails a zero, and nonsense is a dash rather than an error', () => {
+  assert.equal(span(HOUR), '1 h', 'a whole hour grew a decimal');
+  assert.equal(span(MIN), '1 min');
+  for (const junk of [0, -1, NaN, Infinity, null, undefined, '90', {}]) {
+    assert.equal(span(junk), '—', `span(${String(junk)})`);
   }
 });
 

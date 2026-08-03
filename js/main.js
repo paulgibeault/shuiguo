@@ -6,12 +6,21 @@
 //
 // This file used to be the whole game. It is now the boot path plus one of
 // three hosts: the campaign's farm and market live in js/farm-host.js and
-// js/market-host.js, and which screen is up is js/mode.js's business. Free play
-// itself is UNCHANGED — same save key, same score lane, same records, same
-// rules — and pinned that way by tests/free-play-isolation.
+// js/market-host.js, and which screen is up is js/mode.js's business.
+//
+// This host minds SOMEBODY'S STALL. Same save key, same score lane, same
+// records, same rules, and the same isolation promise it has always kept — the
+// only campaign state it may write is cash, and only as the stallholder's split
+// (see §paySplit). What changed is where the fruit comes from: a friend hands
+// over a finite morning's produce, the wholesaler an endless crate, and the
+// endless one is free play exactly as it always was, down to the rng sequence
+// (js/friends.js §weightedDraw).
 
-import { FRUITS, MAX_LEVEL, PHYS, FRIENDS } from './constants.js';
-import { makeGame, start, tick, serialize, restore, inDanger } from './game.js';
+import { FRUITS, MAX_LEVEL, PHYS, FRIENDS, WHOLESALER } from './constants.js';
+import {
+  makeGame, start, tick, serialize, restore, inDanger, setStock, finish,
+  isSoldOut, isSettled,
+} from './game.js';
 import { makeRenderer } from './render.js';
 import { bindInput } from './input.js';
 import { makeEffects, pushEvent, pruneEffects, resetEffects, cheer } from './effects.js';
@@ -22,13 +31,22 @@ import { sfx } from './sfx.js';
 import { makeRng } from './arcade-rng.js';
 import { paintChip } from './chips.js';
 import { makeRouter } from './mode.js';
-import { chainMultiplier, friendCut, priceOfEquipment } from './economy.js';
-import { earn, hasFarm, crateSize, canGoToMarket, couldUseAHand } from './campaign.js';
+import { chainMultiplier, friendCut, priceOfEquipment, tidyBonusPercent } from './economy.js';
 import {
-  FIRST_FRIEND, friendOf, openFriends, isBalanced, weightedDraw,
+  earn, hasFarm, crateSize, canGoToMarket, couldUseAHand, seedCount, isUnlocked,
+} from './campaign.js';
+import {
+  countOf, levelsIn, totalCount, drawFromCrate, packCounts, unpackCounts,
+} from './counts.js';
+import {
+  STALLS, stallOf, stallName, stallAlt, openFriends, isEndless, isRanked,
+  stockCrate, weightedDraw, crateSizeOf,
+  makeStallClock, noteStallSold, msUntilRestock, packStallClock, unpackStallClock,
 } from './friends.js';
 import { fruitCard, lockedCard, paintCardsIn } from './cards.js';
-import { multiplier, money } from './format.js';
+import { fruitTile, lockedTile, fruitStats, chainNote } from './collection.js';
+import { renderQueue } from './queue.js';
+import { multiplier, money, countdown } from './format.js';
 import { makeCampaignSave, bootScreen } from './campaign-save.js';
 import { makeFarmHost } from './farm-host.js';
 import { makeMarketHost } from './market-host.js';
@@ -37,24 +55,48 @@ const $ = (id) => document.getElementById(id);
 
 const SAVE_KEY = 'save';
 const DISCOVERED_KEY = 'discovered';
+// Whose stall is picking again, and until when. Free play's own key, alongside
+// its board — a friend's farm is not campaign state (the campaign has never
+// heard of the cast's fields) and the isolation promise stays exactly as narrow
+// as it was: this mode writes `save`, `stalls`, and the campaign's CASH.
+const STALLS_KEY = 'stalls';
 const now = () => performance.now();
 
 // Spawn sequence rng. Seeded per game from entropy; state rides the save so a
 // restored game continues the same sequence.
 const rng = makeRng((Math.random() * 0xffffffff) >>> 0);
 
-// Whose stall is being minded. The dropper reads this variable live rather than
-// closing over a friend, so choosing a different one re-stocks the sky without
-// rebuilding the game — it is the same board, the same save and the same rules
-// whoever is watching.
+// Whose stall is being minded, and what is left of what they picked this
+// morning. The dropper reads both variables live rather than closing over
+// either, so choosing a different stall re-stocks it without rebuilding the
+// game — it is the same board, the same save and the same rules whoever is
+// watching.
 //
-// And it is emphatically not a CRATE: a friend's stall is infinite, the weights
-// changing only what the sky sends down and never how much of it there is. The
+// `crate` is the whole difference between a friend's stall and the wholesaler's:
+// a friend hands you a MORNING'S PRODUCE, which empties and ends the run, and
+// the wholesaler hands you an endless one (`null` here — nothing to count).
+// Either way the fruit that comes down is only ever what a sky can send, so the
 // board stays exactly as strict about a hostile save as it always was.
-let friend = FIRST_FRIEND;
-const g = makeGame({ rng, now, drawFruit: () => weightedDraw(friend.weights, rng) });
+let stall = WHOLESALER;
+let crate = null;
+
+// …and how long until each of them has picked another morning. One farm, one
+// morning: selling a friend's crate shuts their stall until `restockMs` has
+// passed (js/friends.js §the morning after). The wholesaler is never in here —
+// nobody's field is behind an endless crate — so there is always somewhere to
+// go, which is what keeps this a limit rather than a wait.
+let stallClock = makeStallClock();
+
+function drawFruit() {
+  return crate ? drawFromCrate(crate, rng) : weightedDraw(stall.weights, rng);
+}
+
+const g = makeGame({ rng, now, drawFruit });
 let best = 0;
 let saveDirty = false;
+// Set when the crate runs dry, so the run can wait for the pile to stop rolling
+// before it closes — a fruit still in the air might yet merge.
+let soldOutAt = null;
 
 // Every fruit level this player has ever MADE (levels 2–11), across all games.
 // The source of truth is Arcade.stats; this is the in-memory mirror.
@@ -68,20 +110,29 @@ let runStartedAt = null;
 let firstWatermelonAt = null;
 let wasInDanger = false;
 
+// How long to wait for the pile to stop rolling once the crate is empty before
+// calling the day. The market host's own number, for the same reason: closing
+// mid-chain would rob the player of the score.
+const SOLD_OUT_GRACE_MS = 4000;
+
 const canvas = $('board');
 const R = makeRenderer(canvas);
 // This board is somebody's stall, and they sit on the plank and watch you work
 // it. This renderer only ever draws free play, so the market host's own perch
 // is left alone.
 //
-// Nothing ever changes who is minding the stall without re-perching them, so
-// the two moves are one function rather than a pairing every call site has to
-// remember.
-function setFriend(f) {
-  friend = f;
-  R.setPerch(f.level);
+// Nothing ever changes who is minding the stall without re-perching them and
+// re-stocking the dropper, so all three moves are one function rather than a
+// trio every call site has to remember. A null crate is the endless stall; any
+// other value is a morning's produce that the game must know can run out, which
+// is what `finite` tells js/game.js.
+function setStall(s, stock = null) {
+  stall = s;
+  crate = stock;
+  R.setPerch(s.level);
+  setStock(g, { draw: drawFruit, finite: !!stock });
 }
-setFriend(friend);
+setStall(stall);
 // Visual-only, host-owned, never saved — see js/effects.js.
 const fx = makeEffects();
 
@@ -96,18 +147,55 @@ function pullSettings() {
 }
 
 // ── HUD ────────────────────────────────────────────────────────────────────
-const nextCanvas = $('next');
 
 function refreshHud() {
   $('score').textContent = String(g.score);
   $('best').textContent = String(Math.max(best, g.score));
-  const f = FRUITS[g.next - 1];
-  $('next-label').textContent = `${f.name} ${f.hanzi}`;
-  drawNext();
+  renderQueue($('queue-chips'), g.queue, $('next-label'));
+  // Nothing coming and nothing left to come: the day is done, and the line that
+  // names the next fruit says so instead of going quietly blank.
+  if (g.queue.length === 0 && crate && totalCount(crate) === 0) {
+    $('next-label').textContent = 'Sold out 卖完了';
+  }
+  buildStallStrip();
+  refreshPackUp();
 }
 
-function drawNext() {
-  paintChip(nextCanvas, g.next, 0.34);
+// What is left of this morning's produce, as chips with counts — the market
+// HUD's strip, on the free-play board, because a friend's crate emptying is
+// exactly the same clock. The endless stall has no clock and says so: one chip
+// of the wholesaler's own fruit under an ∞, rather than a strip that is
+// mysteriously always blank.
+function buildStallStrip() {
+  const holder = $('stall-strip');
+  holder.textContent = '';
+  const cells = crate
+    ? levelsIn(crate).map((level) => [level, `×${countOf(crate, level)}`, ''])
+    : [[stall.level, '∞', ' endless']];
+  for (const [level, caption, extra] of cells) {
+    const cell = document.createElement('figure');
+    cell.className = caption === '∞' ? 'crate-chip endless' : 'crate-chip';
+    const art = document.createElement('canvas');
+    art.className = 'chip-art';
+    art.setAttribute('role', 'img');
+    art.setAttribute('aria-label', `${FRUITS[level - 1].name}${extra}`);
+    const cap = document.createElement('figcaption');
+    cap.textContent = caption;
+    cell.append(art, cap);
+    holder.appendChild(cell);
+    paintChip(art, level, 0.3);
+  }
+}
+
+// "Pack up 收摊" is the smart play and reads as the cowardly one, so once there
+// is a bonus to be had the button says what it pays — the market's own idiom,
+// asked of the same figure that will actually be paid (js/economy.js
+// §friendCut). A run nobody is splitting a till with advertises nothing.
+function refreshPackUp() {
+  const tidy = splitFor('packed') - splitFor('toppled');
+  $('stall-pack-up').textContent = tidy > 0
+    ? `Pack up 收摊 +${tidyBonusPercent()}%`
+    : 'Pack up 收摊';
 }
 
 // ── discovery ──────────────────────────────────────────────────────────────
@@ -312,26 +400,33 @@ function hideChainBanner() {
 
 // ── screens ────────────────────────────────────────────────────────────────
 // One router owns all seven; free play registers the three it drives. The
-// chart is rebuilt every time the free-play menu comes up rather than once at
-// boot — it is a collection book now, so the peach you just found is filled in
-// by the time you look. It also has to be painted while its sheet is VISIBLE:
-// a hidden sheet is display:none, and a chip canvas measured there has no CSS
-// size to scale its backing store from. The router settles the DOM before it
-// calls onEnter, which is what makes that safe.
+// collection is rebuilt every time it comes up rather than once at boot, so the
+// peach you just found is filled in by the time you look. It also has to be
+// painted while its sheet is VISIBLE: a hidden sheet is display:none, and a
+// chip canvas measured there has no CSS size to scale its backing store from.
+// The router settles the DOM before it calls onEnter, which is what makes that
+// safe.
 const router = makeRouter();
 
 router
-  .add('mode', { sheet: $('mode'), onEnter: refreshMap })
-  .add('menu', { sheet: $('menu'), onEnter: buildChart })
-  .add('game', { chrome: [$('hud')] })
-  .add('over', { sheet: $('over') });
+  // The two screens that can show a stall picking again stop the countdown
+  // timer on the way out — nothing on any other screen is waiting for it.
+  .add('mode', { sheet: $('mode'), onEnter: refreshMap, onExit: stopClock })
+  .add('menu', { sheet: $('menu'), onEnter: buildCollection, onExit: closeFruit })
+  .add('stall', { sheet: $('stall'), onEnter: buildStallSheet })
+  // One header per board (the queue rail lives inside it) and one counter over
+  // the foot of the board (the crate and Pack up) — see index.html. Arriving
+  // re-fits the world, because the counter is a band the world may not use.
+  .add('game', { chrome: [$('hud'), $('stall-counter')], onEnter: applyResize })
+  .add('over', { sheet: $('over'), onExit: stopClock });
 
 function show(screen) { router.route(screen); }
 
-// `who` is the friend whose stall this is; omitted it stays whoever it was,
-// which is what Again 再来 wants — you are still minding the same stall.
-function beginGame(resumed, who) {
-  if (who) setFriend(who);
+// `who` is the stall this is, and `stock` the crate they handed over — a fresh
+// one every time, because a crate is a morning and mornings do not repeat.
+// Omitted, both stay whatever they were, which is what a resume wants.
+function beginGame(resumed, who, stock = null) {
+  if (who) setStall(who, stock);
   resetEffects(fx);
   clearCards();
   hideChainBanner();
@@ -339,34 +434,51 @@ function beginGame(resumed, who) {
   runStartedAt = resumed ? null : performance.now();
   firstWatermelonAt = null;
   wasInDanger = false;
+  soldOutAt = null;
   show('game');
   refreshHud();
   loop.start();
   canvas.focus();
 }
 
-function endGame() {
+// Every ending is a sale here too (the campaign's pillar, and it was always
+// true of this board — the stall filling up has never cost the player their
+// score). What the reason changes is the heading, the sound, and whether the
+// friend's split earns the Tidy Stall.
+const OVER_TITLES = {
+  toppled: 'The stall is full! 满了!',
+  packed: 'Packed up! 收摊了!',
+  'sold-out': 'Sold out! 卖完了!',
+};
+
+function endGame(reason = 'toppled') {
   loop.kick();                       // one last frame with the final board
   clearCards();
   hideChainBanner();
+  $('over-title').textContent = OVER_TITLES[reason] || OVER_TITLES.toppled;
   $('final-score').textContent = String(g.score);
-  // The BOARD is only comparable with other boards stocked the same way, so only
-  // an evenly-stocked stall competes (js/friends.js §isBalanced). 葡萄's cozy
-  // stall rains small fruit and is a chain paradise; 苹果's fills fast and pays
-  // fast. A high score or a best chain out of either would be a lie sitting on
-  // the same board as everybody else's honest one — and the sheet must not
-  // congratulate a score the board then refuses, so the banner is gated with
-  // them.
+  // The BOARD is only comparable with other boards stocked the same way AND run
+  // on the same clock, so only the endless, evenly-stocked stall competes
+  // (js/friends.js §isRanked) — the wholesaler's. 葡萄's cozy crate rains small
+  // fruit and is a chain paradise; 苹果's fills fast and pays fast; and any crate
+  // at all caps what a run can possibly score. A high score or a best chain out
+  // of one of those would be a lie sitting on the same board as everybody else's
+  // honest one — and the sheet must not congratulate a score the board then
+  // refuses, so the banner is gated with them.
   //
   // The collection book is NOT gated: a first pear is a first pear wherever you
   // made it, and `discovered` fills from any stall as it always has.
-  const ranked = isBalanced(friend);
+  const ranked = isRanked(stall, crate == null);
   const isBest = ranked && g.score > best;
   if (isBest) best = g.score;
   $('new-best').hidden = !isBest;
   show('over');
   fillSummary();
-  paySplit();
+  paySplit(reason);
+  // Their morning is sold. The clock starts at the END of the day rather than
+  // when the crate was handed over, so the wait is the whole of it however long
+  // the run took — and a run left open overnight costs the friend nothing.
+  closeStall();
 
   // records/scores/stats — all fire-and-forget, and gated on `ranked` above
   if (ranked && g.score > 0) {
@@ -446,28 +558,126 @@ function fillSummary() {
 // No farm means no split: there is nowhere for the money to go, and a player
 // who has never opened the campaign sees the game-over sheet they always saw
 // and writes not one campaign byte.
-function paySplit() {
+//
+// The wholesaler takes their share exactly like a friend does — an endless crate
+// is stock somebody fronted you, not a gift — so this path is the same one
+// whichever stall it was.
+function paySplit(reason) {
   const line = $('friend-cut');
   const c = campaignSave.get();
-  const cut = hasFarm(c) ? friendCut(g.score) : 0;
+  const cut = splitFor(reason);
   if (cut <= 0) { line.hidden = true; line.textContent = ''; return; }
   earn(c, cut);
   campaignSave.touch();
   campaignSave.flush();
-  const f = FRUITS[friend.level - 1];
-  line.textContent = `${f.name} splits the till +${cut}元`;
+  line.textContent = `${stallName(stall)} splits the till +${cut}元`;
   line.hidden = false;
 }
 
+// What this ending would pay into the campaign, asked without paying it — the
+// Pack up button wears the difference. Zero for a player with no farm, which is
+// the same "nowhere for it to go" rule paySplit itself runs on.
+function splitFor(reason) {
+  return hasFarm(campaignSave.get()) ? friendCut(g.score, reason) : 0;
+}
+
+// ── the morning after ──────────────────────────────────────────────────────
+// A friend has one farm and you have just sold everything on it, so their stall
+// is shut until they have picked another morning (js/friends.js §restockMsOf).
+//
+// The wholesaler is what makes that a LIMIT rather than a wait: their crate has
+// no field behind it and no clock on it, so there is always a board to play.
+// And nothing anywhere expires, spoils or is lost by staying away — a friend
+// who has restocked simply waits, however long it takes you to come back.
+function closeStall() {
+  const wait = noteStallSold(stallClock, stall, wallNow());
+  // Written the moment it happens, like the discovery set: a stall that was
+  // sold out and then forgotten by a reload would be a friend with two farms.
+  if (wait) Arcade.state.set(STALLS_KEY, packStallClock(stallClock));
+  refreshRestock();
+}
+
+// The game-over sheet's half of it: how long they will be, and what Again means
+// while they are. Again never becomes a dead button — it becomes the way to
+// somebody else's stall, which is the honest answer to "can I play more".
+function refreshRestock() {
+  const left = msUntilRestock(stallClock, stall, wallNow());
+  const note = $('restock-note');
+  note.hidden = left <= 0;
+  note.textContent = left <= 0 ? ''
+    : `${stallName(stall)} is picking again — another crate in ${countdown(left)}.`;
+  $('again').textContent = left > 0 ? 'Another stall 换一摊' : 'Again 再来';
+  if (left > 0) armClock();
+}
+
+// The countdown the map's cards wear.
+function restockLabel(left) { return `Back in ${countdown(left)}`; }
+
+// ── the clock on the two screens that have one ─────────────────────────────
+// A countdown that only moves when you leave the screen and come back is not a
+// countdown. One timer serves the map and the game-over sheet, it is armed only
+// while one of them is showing a wait, and it is an Arcade session timer, so it
+// stops with the app rather than running in a background tab.
+const CLOCK_TICK_MS = 1000;
+let clockTimer = null;
+
+function armClock() {
+  if (clockTimer) return;
+  clockTimer = Arcade.session.setTimeout(tickClock, CLOCK_TICK_MS);
+}
+
+function stopClock() {
+  if (clockTimer) { clockTimer.cancel(); clockTimer = null; }
+}
+
+function tickClock() {
+  clockTimer = null;
+  if (router.is('mode')) tickStallCards();
+  else if (router.is('over')) refreshRestock();
+}
+
+// One second on the map. A card that is still waiting is relabelled in place; a
+// card that has just come back is a different card — a door rather than a
+// countdown — so the corner is rebuilt for it.
+function tickStallCards() {
+  const t = wallNow();
+  for (const card of $('friends').children) {
+    // A grower nobody has met is a silhouette with no line to write a clock on,
+    // and no clock to write: skip it rather than rebuilding the corner at it
+    // every second (a leftover clock for a stall that is no longer open would
+    // otherwise never stop disagreeing with its own card).
+    const line = card.querySelector('.seed-price');
+    if (!line) continue;
+    const left = msUntilRestock(stallClock, stallOf(Number(card.dataset.level)), t);
+    if ((left > 0) !== (card.dataset.restocking === '1')) { buildStalls(); return; }
+    if (left > 0) line.textContent = restockLabel(left);
+  }
+  if (anyRestocking()) armClock();
+}
+
+// Is anything on the map actually counting down? Asked of the cards rather than
+// of the clock, so a stored wait for a stall that is not on the map (a campaign
+// reset, a save from another device) cannot arm a timer with nothing to do.
+function anyRestocking() {
+  return [...$('friends').children].some((card) => card.dataset.restocking === '1');
+}
+
 // ── save plumbing ──────────────────────────────────────────────────────────
-// Whose stall it was rides alongside js/game.js's payload rather than inside
-// it: the game module owns a board, and who is watching it is the host's. It is
-// additive, so a save written before the cast existed resumes into 草莓's stall
-// — which is where it was, since that was the only one there was.
+// Whose stall it was, and what is left of their crate, ride alongside
+// js/game.js's payload rather than inside it: the game module owns a board, and
+// the morning that feeds it is the host's — the same seam the market run keeps
+// (js/campaign-save.js).
+//
+// Both fields are additive, and their absence means something exact. A save
+// written before the cast existed resumes into 草莓's stall, which is where it
+// was, since that was the only one there was. A save written before crates
+// existed carries none, and an endless run is what it was — so it resumes as
+// one, on the leaderboard it was already competing for.
 function flushSave() {
   if (g.state === 'playing') {
     const board = serialize(g);
-    board.friend = friend.level;      // nobody else holds it; no copy needed
+    board.friend = stall.level;       // nobody else holds it; no copy needed
+    if (crate) board.crate = packCounts(crate);
     Arcade.state.set(SAVE_KEY, board);
   }
   saveDirty = false;
@@ -499,7 +709,9 @@ const loop = Arcade.loop((deltaMs) => {
       hudStale = true; saveDirty = true;
     }
     else if (ev.type === 'annihilate') { sfx('annihilate'); hudStale = true; saveDirty = true; }
-    else if (ev.type === 'gameover') { sfx('game-over'); }
+    // Toppling is the pile getting away from you; the other two are the stall
+    // being put away, and they get the market's own contented little cue.
+    else if (ev.type === 'gameover') { sfx(ev.reason === 'toppled' ? 'game-over' : 'pack-up'); }
     pushEvent(fx, ev, tNow, settings.reducedMotion);
   }
 
@@ -511,7 +723,7 @@ const loop = Arcade.loop((deltaMs) => {
   const found = newDiscoveries(discovered, g.events);
   if (found.length) { commitDiscovered(found); queueDiscoveryCards(found); }
 
-  const ended = g.events.some((e) => e.type === 'gameover');
+  const over = g.events.find((e) => e.type === 'gameover');
   g.events.length = 0;
 
   // The plank creaks once as the pile crosses the line — on the way IN, not
@@ -520,8 +732,19 @@ const loop = Arcade.loop((deltaMs) => {
   if (danger && !wasInDanger) sfx('warning');
   wasInDanger = danger;
 
+  // Sold out: the crate and both hands are empty. Wait for the pile to stop
+  // rolling first — a fruit still in the air might yet merge, and closing the
+  // stall mid-chain would rob the player of the score. The endless stall never
+  // reaches this at all, which is the whole of what makes it endless.
+  if (g.state === 'playing' && isSoldOut(g)) {
+    if (soldOutAt == null) soldOutAt = tNow;
+    if (isSettled(g) || tNow - soldOutAt > SOLD_OUT_GRACE_MS) finish(g, 'sold-out');
+  } else {
+    soldOutAt = null;
+  }
+
   if (hudStale) refreshHud();
-  if (ended) { endGame(); return; }
+  if (over) { endGame(over.reason); return; }
 
   // debounced save: at most one write per second of active play
   if (saveDirty && !saveTimer) {
@@ -558,9 +781,11 @@ Arcade.onSettingsChange(() => {
   // Every canvas in the DOM chrome is sized from CSS, which follows
   // --font-scale — so each one has to be re-painted, and only while its own
   // sheet is actually visible (a display:none canvas measures 0).
-  if (!$('menu').hidden) buildChart();
+  if (!$('menu').hidden) { buildCollection(); if (!$('fruit').hidden) buildFruitSheet(); }
   if (!$('mode').hidden) refreshMap();
+  if (!$('stall').hidden) buildStallSheet();
   if (!$('over').hidden) fillSummary();
+  if (router.is('game')) refreshHud();
   if (router.is('market')) market.refreshHud();
   if (router.is('farm')) farm.refresh();
   applyResize();
@@ -575,9 +800,29 @@ Arcade.onStateReplaced(() => {
   bootFromState();
 });
 
+// How much of the foot of the canvas the counter bar is standing on, in CSS px,
+// measured rather than declared: it is a rem-sized bar and the launcher's
+// --font-scale moves it. Zero on the screens that have no counter — the farm,
+// and every sheet — so nothing but a board ever reserves the band.
+//
+// The two counters are the same bar, so whichever is up answers for both; the
+// board screens are the only ones where the number is ever used.
+function counterBand() {
+  const bar = [$('stall-counter'), $('market-counter')].find((el) => !el.hidden);
+  if (!bar) return 0;
+  const foot = canvas.getBoundingClientRect().bottom;
+  return Math.max(0, foot - bar.getBoundingClientRect().top);
+}
+
 // One canvas, three views. Whoever is driving owns the transform, so a resize
-// has to reach all of them and then repaint the one on screen.
+// has to reach all of them and then repaint the one on screen. Routing to a
+// board calls this too (see the router's onEnter hooks): the counter appearing
+// changes how much canvas the world is allowed, and that is a resize in every
+// sense except the window's.
 function applyResize() {
+  const band = counterBand();
+  R.setBottomInset(band);
+  market.setBottomInset(band);
   R.resize();
   farm.resize();
   market.resize();
@@ -589,78 +834,214 @@ window.addEventListener('resize', applyResize);
 
 function drawIdle() { R.draw(g, settings, performance.now(), fx); }
 
-// ── evolution chart on the menu ────────────────────────────────────────────
-// Real fruit, drawn by the real painter — the chart is where a player learns
-// what they are chasing, so flat coloured discs were selling the chain short.
-// It doubles as the collection book: a fruit you have never MADE is a dimmed
-// silhouette under a question mark (style.css does the dimming, so the painter
-// stays the one painter and knows nothing about progress).
-function buildChart() {
-  const holder = $('chart');
+// ── the collection book ────────────────────────────────────────────────────
+// Real fruit, drawn by the real painter, one tile each, up the chain and off
+// the bottom of the shelf — this is where a player learns what they are
+// chasing. A fruit you have never MADE is a dimmed silhouette under a question
+// mark (style.css does the dimming, so the painter stays the one painter and
+// knows nothing about progress), and it is the one tile that does not open.
+//
+// Rebuilt every time the book comes up rather than once at boot, and painted
+// only while its sheet is VISIBLE: a hidden sheet is display:none, and a chip
+// canvas measured there has no CSS size to scale its backing store from.
+function buildCollection() {
+  const holder = $('collection');
   holder.textContent = '';
-  FRUITS.forEach((f, i) => {
-    const level = i + 1;
+  for (let level = 1; level <= MAX_LEVEL; level++) {
     const locked = isDiscoverable(level) && !discovered.has(level);
-    const cell = document.createElement('figure');
-    cell.className = locked ? 'chip locked' : 'chip';
-    cell.title = locked ? 'Not yet made' : `${f.name} · ${f.pinyin} · +${f.score}`;
+    holder.appendChild(locked
+      ? lockedTile(level)
+      : fruitTile({ level, onPick: () => { sfx('menu-click'); openFruit(level); } }));
+  }
+  // How far through the book they are. Level 1 falls out of the dropper and was
+  // never anybody's achievement, so the count is of what can be MADE.
+  const made = [...discovered].filter(isDiscoverable).length;
+  $('collection-count').textContent = `${made} of ${MAX_LEVEL - 1} made · 图鉴`;
+  paintCardsIn(holder);
+}
 
-    const c = document.createElement('canvas');
-    c.className = 'chip-art';
-    c.setAttribute('role', 'img');
-    c.setAttribute('aria-label', locked ? 'Undiscovered fruit' : f.name);
-    cell.appendChild(c);
+// ── one fruit, in full ─────────────────────────────────────────────────────
+// A drawer over the book (js/collection.js builds what it says): the fruit at
+// card size, where it sits in the chain, and every number the tables know about
+// it — what it scores, what a merchant pays, how it is grown and what a seed
+// costs. The campaign's own numbers are read, never written; free play has
+// always been allowed to look at the campaign, and this screen is a book.
+let inspecting = null;
 
-    const cap = document.createElement('figcaption');
-    cap.textContent = locked ? '?' : f.name;
-    cell.appendChild(cap);
+function openFruit(level) {
+  inspecting = level;
+  $('fruit').hidden = false;
+  buildFruitSheet();
+}
 
-    holder.appendChild(cell);
-    if (i < FRUITS.length - 1) {
-      const arrow = document.createElement('span');
-      arrow.className = 'arrow';
-      arrow.textContent = '→';
-      holder.appendChild(arrow);
-    }
-    // after layout, so clientWidth is the CSS size (which follows --font-scale)
-    paintChip(c, i + 1, 0.3);
-  });
+function closeFruit() {
+  inspecting = null;
+  $('fruit').hidden = true;
+}
+
+function buildFruitSheet() {
+  if (inspecting == null) return;
+  const level = inspecting;
+  const f = FRUITS[level - 1];
+  const c = campaignSave.get();
+  const farmed = hasFarm(c);
+
+  $('fruit-name').textContent = f.name;
+  $('fruit-alt').textContent = `${f.hanzi} ${f.pinyin}`;
+  $('fruit-chain').textContent = chainNote(level);
+
+  const dl = $('fruit-stats');
+  dl.textContent = '';
+  for (const [label, value] of fruitStats(level, { seeds: seedCount(c, level), hasFarm: farmed })) {
+    const row = document.createElement('div');
+    const dt = document.createElement('dt');
+    dt.textContent = label;
+    const dd = document.createElement('dd');
+    dd.textContent = value;
+    row.append(dt, dd);
+    dl.appendChild(row);
+  }
+
+  // The one line that is about this player rather than about this fruit: the
+  // right to PLANT a level is earned by merging one at market, and the seed
+  // drawer is where that shows up. Nothing to say to a player with no farm.
+  const note = $('fruit-note');
+  const plantable = farmed && !isUnlocked(c, level);
+  note.hidden = !plantable;
+  note.textContent = plantable ? 'Merge one at the market to earn the right to plant it.' : '';
+
+  // Along the chain, skipping what has not been made — the neighbours are the
+  // two fruit anybody looking at this one is about to ask about.
+  const prev = nextInspectable(level, -1);
+  const next = nextInspectable(level, 1);
+  setNav($('fruit-prev'), prev, '‹ Smaller');
+  setNav($('fruit-next'), next, 'Bigger ›');
+
+  paintChip($('fruit-art'), level, 0.34);   // the sheet is up, so it has a size
+}
+
+function setNav(button, level, fallback) {
+  button.disabled = level == null;
+  button.textContent = level == null ? fallback
+    : (fallback.startsWith('‹') ? `‹ ${FRUITS[level - 1].name}` : `${FRUITS[level - 1].name} ›`);
+  button.dataset.level = level == null ? '' : String(level);
+}
+
+function nextInspectable(from, step) {
+  for (let level = from + step; level >= 1 && level <= MAX_LEVEL; level += step) {
+    if (!isDiscoverable(level) || discovered.has(level)) return level;
+  }
+  return null;
 }
 
 // ── whose stall to mind ────────────────────────────────────────────────────
-// The friends' corner of the map. One card per friend, on the seed-card idiom
-// the shop and the plot picker already use (js/cards.js): the real fruit, its
-// name, and the one word that says how their stall is stocked. Friends whose
-// seed has not been earned in a campaign run are dashed silhouettes under the
-// same hint the shop gives, because it is the same rule.
+// The stalls' corner of the map. One card each, on the seed-card idiom the shop
+// and the plot picker already use (js/cards.js): the real fruit, its name, and
+// the one word that says how the stall is stocked. Friends whose seed has not
+// been earned in a campaign run are dashed silhouettes under the same hint the
+// shop gives, because it is the same rule.
 //
-// With only 草莓 open the grid is hidden and a single labelled door stands in
-// for it — a menu of one is a speed bump. Rebuilt every time the map comes up,
-// exactly like the chart, so the grape you unlocked at market this evening is
-// live by the time you look.
+// The wholesaler leads, always open and always endless, so there is never a
+// menu of one and never a launch with nothing to play. Rebuilt every time the
+// map comes up, exactly like the collection, so the grape you unlocked at market
+// this evening is live by the time you look.
+//
+// A friend whose morning you already sold wears the wait instead of the offer:
+// greyed, with the countdown where the flavour word goes. Greyed rather than
+// hidden, as everywhere — a stall you cannot open yet is a reason to come back,
+// and the door beside it (the wholesaler's) is always open.
 
-function buildFriends() {
+function buildStalls() {
   const holder = $('friends');
   const c = campaignSave.get();
   const open = openFriends(c);
-  const many = open.length >= 2;
+  const t = wallNow();
   holder.textContent = '';
-  // Nobody to choose between: the one door is the whole interface.
-  holder.hidden = !many;
-  $('friends-hint').hidden = !many || open.length === FRIENDS.length;
-  $('play-free').hidden = many;
-  $('play-free-name').textContent = FRUITS[FIRST_FRIEND.level - 1].name;
-  if (!many) return;
+  $('friends-hint').hidden = open.length === FRIENDS.length;
 
-  for (const f of FRIENDS) {
-    holder.appendChild(open.includes(f)
-      ? fruitCard({
-        level: f.level, meta: f.flavor,
-        onPick: () => { sfx('menu-click'); beginGame(false, f); },
-      })
-      : lockedCard(f.level, 'A grower you have not met — merge one at the market'));
+  for (const s of STALLS) {
+    const known = s === WHOLESALER || open.includes(s);
+    if (!known) {
+      holder.appendChild(lockedCard(s.level, 'A grower you have not met — merge one at the market'));
+      continue;
+    }
+    const left = msUntilRestock(stallClock, s, t);
+    const card = fruitCard({
+      level: s.level, title: s.title, alt: s.alt,
+      meta: left > 0 ? restockLabel(left) : s.flavor,
+      note: left > 0 ? 'Picking again 收成中'
+        : (isEndless(s) ? 'Endless crate' : `${crateSizeOf(s)} fruit`),
+      enabled: left <= 0,
+      onPick: () => { sfx('menu-click'); openStall(s); },
+    });
+    if (left > 0) card.dataset.restocking = '1';
+    holder.appendChild(card);
   }
   paintCardsIn(holder);          // the sheet is up now, so the chips have a size
+  if (anyRestocking()) armClock();
+}
+
+// ── the launch window ──────────────────────────────────────────────────────
+// What is in today's crate, before you commit to selling it. A friend's produce
+// is picked fresh each time you knock (js/friends.js §stockCrate), so this is
+// genuinely today's — and it is the one thing worth knowing before you choose
+// whose morning to spend: a crate of cherries is a long patient day and a crate
+// of persimmons is a short loud one.
+//
+// It is a screen rather than a drawer because the map is behind it and there is
+// nothing to see through to.
+
+let pending = null;      // { stall, crate } — the offer currently on screen
+
+function openStall(s) {
+  // The card is already greyed while they are picking; this is the same rule
+  // said where the crate is actually taken, so no path can knock on a stall
+  // that has nothing in it.
+  if (msUntilRestock(stallClock, s, wallNow()) > 0) return;
+  pending = { stall: s, crate: stockCrate(s, rng) };
+  router.route('stall');
+}
+
+function buildStallSheet() {
+  if (!pending) return;
+  const { stall: s, crate: stock } = pending;
+  // English on the line you read, both languages on the line under it — the
+  // card idiom, and it keeps the title to one line at any font scale.
+  $('stall-title').textContent = `${stallName(s)}'s crate`;
+  $('stall-alt').textContent = `${stallAlt(s)} · ${s.flavor}`;
+
+  const holder = $('stall-crate');
+  holder.textContent = '';
+  const cells = stock
+    ? levelsIn(stock).map((level) => [level, `×${countOf(stock, level)}`])
+    : [[s.level, '∞']];
+  for (const [level, caption] of cells) {
+    const cell = document.createElement('figure');
+    cell.className = stock ? 'crate-chip' : 'crate-chip endless';
+    const art = document.createElement('canvas');
+    art.className = 'chip-art';
+    art.setAttribute('role', 'img');
+    art.setAttribute('aria-label', FRUITS[level - 1].name);
+    const cap = document.createElement('figcaption');
+    cap.textContent = caption;
+    cell.append(art, cap);
+    holder.appendChild(cell);
+    paintChip(art, level, 0.3);
+  }
+
+  // One line, and it is the deal: what you are selling, and what it is worth to
+  // you. Both halves are true of the wholesaler too — an endless crate is stock
+  // somebody fronted you, and they take their share of it like anybody else.
+  $('stall-note').textContent = stock
+    ? `${totalCount(stock)} fruit to sell — they split the day's till with you`
+    : 'A crate that never empties — they split the day\'s till with you';
+}
+
+function launchStall() {
+  if (!pending) { router.route('mode'); return; }
+  const { stall: s, crate: stock } = pending;
+  pending = null;
+  beginGame(false, s, stock);
 }
 
 // ── the campaign ───────────────────────────────────────────────────────────
@@ -711,7 +1092,12 @@ market.setHooks({
 
 router
   .add('farm', { chrome: [$('farm-hud')], onEnter: farm.enter, onExit: farm.exit })
-  .add('market', { chrome: [$('market-hud')], onEnter: market.enter, onExit: market.exit })
+  // …and the same on the market's board: enter, then re-fit around the counter.
+  .add('market', {
+    chrome: [$('market-hud'), $('market-counter')],
+    onEnter: (from) => { market.enter(from); applyResize(); },
+    onExit: market.exit,
+  })
   .add('appraisal', { sheet: $('appraisal') });
 
 // The map, brought up to date on every look — same discipline as the farm:
@@ -750,7 +1136,7 @@ function refreshMap() {
     hint.hidden = true;
   }
 
-  buildFriends();
+  buildStalls();
 }
 
 // Was the run being appraised the gift run? The appraisal lands in `buy-farm`
@@ -788,9 +1174,6 @@ function toCampaign() {
 }
 
 $('play-campaign').addEventListener('click', () => { sfx('menu-click'); toCampaign(); });
-// The first friend's door on the map — the chooser grid replaces it once there
-// is genuinely a choice (see buildFriends).
-$('play-free').addEventListener('click', () => { sfx('menu-click'); beginGame(false, FIRST_FRIEND); });
 $('map-market').addEventListener('click', () => { sfx('menu-click'); toMarket(); });
 // The shop is a drawer over the farm, so the map walks there and opens it —
 // one tap, and the player still sees where the shop lives.
@@ -800,7 +1183,25 @@ $('map-shop').addEventListener('click', () => {
   router.route('farm');
   farm.openShop();
 });
+// The launch window: take the crate, or put it back and go somewhere else.
+$('stall-open').addEventListener('click', () => { sfx('menu-click'); launchStall(); });
+for (const id of ['stall-back', 'stall-x']) {
+  $(id).addEventListener('click', () => { sfx('menu-click'); pending = null; router.route('mode'); });
+}
 $('to-collection').addEventListener('click', () => { sfx('menu-click'); router.route('menu'); });
+// The book's drawer: two ways to shut it, and two ways along the chain without
+// shutting it at all.
+for (const id of ['fruit-x', 'fruit-close']) {
+  $(id).addEventListener('click', () => { sfx('menu-click'); closeFruit(); });
+}
+for (const id of ['fruit-prev', 'fruit-next']) {
+  $(id).addEventListener('click', () => {
+    const level = Number($(id).dataset.level);
+    if (!level) return;
+    sfx('menu-click');
+    openFruit(level);
+  });
+}
 $('menu-to-mode').addEventListener('click', () => { sfx('menu-click'); router.route('mode'); });
 $('farm-to-menu').addEventListener('click', () => { sfx('menu-click'); router.route('mode'); });
 $('to-market').addEventListener('click', () => { sfx('menu-click'); toMarket(); });
@@ -835,7 +1236,22 @@ bindInput(canvas, {
 });
 
 // ── the stall's own buttons ────────────────────────────────────────────────
-$('again').addEventListener('click', () => { sfx('menu-click'); beginGame(false); });
+// Packing up is the deliberate ending, and it is the smart one: it earns the
+// Tidy Stall on the friend's split, exactly as it does on a market day.
+$('stall-pack-up').addEventListener('click', () => { sfx('menu-click'); finish(g, 'packed'); });
+// Again 再来 is the same stall with a fresh morning behind it — a crate is a
+// day's picking, and yesterday's is sold. While that friend is picking the next
+// one there is no morning to hand over, so the same button goes to the map,
+// where the wholesaler is always open. One button, never a dead one.
+$('again').addEventListener('click', () => {
+  sfx('menu-click');
+  if (msUntilRestock(stallClock, stall, wallNow()) > 0) {
+    g.state = 'menu';
+    show('mode');
+    return;
+  }
+  beginGame(false, stall, stockCrate(stall, rng));
+});
 $('to-menu').addEventListener('click', () => {
   sfx('menu-click');
   g.state = 'menu';
@@ -851,9 +1267,14 @@ function bootFromState() {
   resetEffects(fx);
   clearCards();
   hideChainBanner();
+  closeFruit();
+  stopClock();
   const rec = Arcade.records.get('high-score');
   best = rec && typeof rec.value === 'number' ? rec.value : 0;
   loadDiscovered();
+  // Who is still picking. Read as defensively as the crate is (js/friends.js
+  // §unpackStallClock): a clock we cannot believe is an open stall.
+  stallClock = unpackStallClock(Arcade.state.get(STALLS_KEY));
 
   const where = bootScreen({
     marketSave: campaignSave.readMarket(),
@@ -866,12 +1287,16 @@ function bootFromState() {
   }
 
   const save = Arcade.state.get(SAVE_KEY);
+  // Back to the stall you were minding, with what was left of their crate.
+  // `stallOf` answers with 草莓 for anything it does not recognise, including
+  // the saves written before there was a cast — which is where those runs were,
+  // because it was the only stall there was — and a save with no crate on it is
+  // an endless run, which is what every one of those was too.
+  //
+  // The stall goes back BEFORE the board does: js/game.js asks whether this game
+  // can run out before it will believe a save with an empty hand in it.
+  if (where !== 'mode' && save) setStall(stallOf(save.friend), save.crate ? unpackCounts(save.crate) : null);
   if (where !== 'mode' && save && restore(g, save)) {
-    // Back to the stall you were minding. `friendOf` answers with 草莓 for
-    // anything it does not recognise, including the saves written before there
-    // was a cast — which is where those runs were, because it was the only
-    // stall there was.
-    setFriend(friendOf(save.friend));
     bankBoardAsDiscovered();
     runStartedAt = null;             // a resumed run doesn't compete for time
     firstWatermelonAt = null;
@@ -890,7 +1315,7 @@ function bootFromState() {
 await Arcade.ready;
 pullSettings();
 applyResize();
-bootFromState();          // reads the discovery set, then show() builds the chart
+bootFromState();          // reads the discovery set, then show() builds the book
 // Real state on every boot (also what proves the storage bridge in the
 // acceptance checklist — the first save write otherwise waits for gameplay).
 Arcade.stats.update('session', (p) => ({ launches: ((p && p.launches) || 0) + 1 }));
