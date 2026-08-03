@@ -27,6 +27,11 @@ export function makeGame({ rng, now, drawFruit }) {
     canDrop: true,
     lockedAt: null,      // wall-clock ms when input locked (drop happened)
     overAt: null,        // set when the game ends
+    // The combo in flight, on the same clock as `lockedAt`. It lives on the
+    // game rather than inside resolveMerges because a chain is a thing the
+    // PLAYER experiences over a second or so, and resolveMerges is 4ms wide.
+    chainDepth: 0,
+    lastMergeAt: null,
     // per-game tallies the host folds into Arcade.stats at game over
     tally: freshTally(),
     events: [],          // drained by the host each frame → sfx/particles
@@ -100,6 +105,8 @@ export function start(g) {
   g.canDrop = true;
   g.lockedAt = null;
   g.overAt = null;
+  g.chainDepth = 0;
+  g.lastMergeAt = null;
   g.tally = freshTally();
   g.current = g.draw();
   g.next = g.draw();
@@ -154,11 +161,29 @@ function emitImpacts(g, impacts) {
   }
 }
 
+// The combo counter, advanced once per merge and measured against the wall
+// clock. Inside RULES.chainWindowMs of the previous merge this is the same
+// combo and deepens; outside it, a new one starts at 1. The value returned is
+// the 1-based depth that rides on the event — the semantics `completedChains`
+// in js/progress.js already reads, so a 1,2,3,1,2 batch still means what it
+// always did.
+//
+// chainBest is banked HERE rather than at the end of the tick, because a
+// windowed combo can still be in flight when the tick (and the frame, and the
+// batch the host drains) ends.
+function bumpChain(g, t) {
+  const continuing = g.lastMergeAt != null && t - g.lastMergeAt < RULES.chainWindowMs;
+  g.chainDepth = continuing ? g.chainDepth + 1 : 1;
+  g.lastMergeAt = t;
+  if (g.chainDepth > g.tally.chainBest) g.tally.chainBest = g.chainDepth;
+  return g.chainDepth;
+}
+
 // Merge every contacting same-level pair, then keep scanning so a freshly
 // spawned fruit chains in the SAME tick (GRD §3 "instantly process its own
-// collision check").
+// collision check"). Same-tick cascades are still cascades — they simply are
+// not the only ones any more.
 function resolveMerges(g, firstContacts) {
-  let chain = 0;
   let pairs = firstContacts;
   const dead = new Set();
   const t = g.now();
@@ -168,13 +193,16 @@ function resolveMerges(g, firstContacts) {
       dead.add(a.id); dead.add(b.id);
       const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
       g.bodies = g.bodies.filter((o) => o !== a && o !== b);
-      chain++;
+      const chain = bumpChain(g, t);
       g.tally.merges++;
       if (a.level === MAX_LEVEL) {
-        // watermelon + watermelon: mutual destruction, max points, no spawn
+        // watermelon + watermelon: mutual destruction, max points, no spawn.
+        // It carries `chain` for the same reason a merge does — the campaign
+        // pays a chain multiplier on it (js/economy.js), and the biggest thing
+        // the board can do must not be the one merge that drops out of a combo.
         g.score += ANNIHILATE_SCORE;
         g.tally.annihilations++;
-        g.events.push({ type: 'annihilate', x: mx, y: my, score: ANNIHILATE_SCORE });
+        g.events.push({ type: 'annihilate', x: mx, y: my, score: ANNIHILATE_SCORE, chain });
         continue;
       }
       const born = a.level + 1;
@@ -199,7 +227,6 @@ function resolveMerges(g, firstContacts) {
       }
     }
   }
-  if (chain > g.tally.chainBest) g.tally.chainBest = chain;
 }
 
 // The line of death (GRD §5): any fruit whose top sits above the deadline for
@@ -245,6 +272,13 @@ export function inDanger(g) {
 // Everything needed to put a mid-game board back: fruit kinematics, the
 // dropper queue, the score, and the rng state so future spawns continue the
 // same sequence.
+//
+// What is deliberately NOT here: the combo in flight. `lastMergeAt` is a
+// performance.now() reading and means nothing in the session that reads it
+// back, and a wall-time window has no honest way to survive an app that was
+// closed for a week. So a restored run starts with no combo — forfeiting a
+// mid-combo on suspend is a stated property of the rule, not an oversight.
+// `tally.chainBest` rides along as it always has: the deep chain HAPPENED.
 
 export function serialize(g) {
   if (g.state !== 'playing') return null;
@@ -308,6 +342,8 @@ export function restore(g, save) {
   g.canDrop = true;
   g.lockedAt = null;
   g.overAt = null;
+  g.chainDepth = 0;
+  g.lastMergeAt = null;
   g.dropX = clampDropX(g, WORLD.width / 2);
   return true;
 }

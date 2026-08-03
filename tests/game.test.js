@@ -5,7 +5,7 @@ import {
   finish, isSoldOut, isSettled,
 } from '../js/game.js';
 import { makeBody, settled } from '../js/physics.js';
-import { WORLD, RULES, PHYS, radiusOf, scoreOf, ANNIHILATE_SCORE, MAX_SPAWN_LEVEL } from '../js/constants.js';
+import { WORLD, RULES, PHYS, radiusOf, scoreOf, ANNIHILATE_SCORE, MAX_LEVEL, MAX_SPAWN_LEVEL } from '../js/constants.js';
 import { makeRng } from '../js/arcade-rng.js';
 
 // A controllable clock: tests advance it by hand.
@@ -161,7 +161,113 @@ test('chain reaction: a newborn immediately merges with its own level', () => {
   assert.equal(g.score, scoreOf(3) + scoreOf(4), 'both merges scored');
   const chainEv = g.events.filter((e) => e.type === 'merge');
   assert.equal(chainEv.length, 2);
+  assert.deepEqual(chainEv.map((e) => e.chain), [1, 2], 'the same-tick cascade counts as it always did');
   assert.equal(g.tally.chainBest, 2);
+});
+
+// ── the combo window ───────────────────────────────────────────────────────
+// A chain used to be a run of merges inside ONE physics tick — 4ms of sim, so
+// only a newborn born already overlapping its next partner ever counted. The
+// cascade the player watches happen (a merge pops, the pile shifts, two pears
+// roll together half a second later) was credited as a row of 1-chains. The
+// window is now wall time, and these pin what that means.
+
+// One merge, right now, wherever it is put. Clears the board first so the
+// newborn of the last one can never be a party to the next.
+function forceMerge(g, level, x = 180) {
+  const r = radiusOf(level);
+  g.bodies = [
+    makeBody(level, x, WORLD.floorY - r),
+    makeBody(level, x + 2 * r - 0.5, WORLD.floorY - r),
+  ];
+  tick(g, 1 / 240);
+}
+
+function chainsOf(g) {
+  return g.events.filter((e) => e.type === 'merge').map((e) => e.chain);
+}
+
+test('a merge the pile settles into a second later is the same combo', () => {
+  const { g, now } = playingGame();
+  forceMerge(g, 2);
+  now.advance(RULES.chainWindowMs - 200);
+  forceMerge(g, 2);
+  assert.deepEqual(chainsOf(g), [1, 2], 'the second merge fell out of the combo');
+  assert.equal(g.tally.chainBest, 2);
+});
+
+test('two deliberate merges, well apart, never chain', () => {
+  const { g, now } = playingGame();
+  forceMerge(g, 2);
+  now.advance(RULES.chainWindowMs + 1);
+  forceMerge(g, 2);
+  now.advance(RULES.chainWindowMs * 2);
+  forceMerge(g, 2);
+  assert.deepEqual(chainsOf(g), [1, 1, 1], 'unrelated merges were credited as a combo');
+  assert.equal(g.tally.chainBest, 1);
+});
+
+// The window is measured from the PREVIOUS merge, not from the start of the
+// combo — which is what lets a long cascade keep going as long as it keeps
+// producing, and is the whole reason a chain can outlive a drop.
+test('a combo deepens across drops as long as merges keep landing', () => {
+  const { g, now } = playingGame();
+  for (let i = 0; i < 5; i++) {
+    forceMerge(g, 2);
+    now.advance(RULES.chainWindowMs - 100);
+  }
+  assert.deepEqual(chainsOf(g), [1, 2, 3, 4, 5]);
+  assert.equal(g.tally.chainBest, 5);
+
+  // …and it ends the moment the pile goes quiet for long enough
+  now.advance(RULES.chainWindowMs);
+  forceMerge(g, 2);
+  assert.equal(g.events.filter((e) => e.type === 'merge').pop().chain, 1);
+  assert.equal(g.tally.chainBest, 5, 'a fresh combo walked the record back');
+});
+
+// chainBest is banked per merge now, because a windowed combo can still be in
+// flight when the tick — and the frame, and the batch the host drains — ends.
+// Banking it at the end of the tick lost every chain that spanned two.
+test('chainBest counts the deepest combo, not the deepest single tick', () => {
+  const { g, now } = playingGame();
+  forceMerge(g, 3);
+  now.advance(500);
+  forceMerge(g, 3);
+  now.advance(500);
+  forceMerge(g, 3);
+  assert.equal(g.tally.chainBest, 3, 'three merges over a second were three 1-chains');
+});
+
+test('a restored run keeps its record and forfeits the combo it was mid-way through', () => {
+  const { g, now } = playingGame();
+  forceMerge(g, 2);
+  now.advance(200);
+  forceMerge(g, 2);
+  assert.equal(g.chainDepth, 2);
+  const save = serialize(g);
+  assert.equal(save.lastMergeAt, undefined, 'a performance.now() reading was written to storage');
+
+  const later = makeClock();
+  const g2 = makeGame({ rng: makeRng(0), now: later });
+  assert.ok(restore(g2, save));
+  assert.equal(g2.chainDepth, 0, 'the combo came back from the dead');
+  assert.equal(g2.lastMergeAt, null);
+  assert.equal(g2.tally.chainBest, 2, 'the deep chain still happened');
+
+  // the next merge starts over, however soon it lands
+  forceMerge(g2, 2);
+  assert.equal(chainsOf(g2).pop(), 1);
+});
+
+test('the annihilation carries its combo depth like any other merge', () => {
+  const { g, now } = playingGame();
+  forceMerge(g, 2);
+  now.advance(300);
+  forceMerge(g, MAX_LEVEL, 90);
+  const blown = g.events.filter((e) => e.type === 'annihilate');
+  assert.equal(blown.length, 1);
+  assert.equal(blown[0].chain, 2, 'the biggest thing the board can do dropped out of the combo');
 });
 
 test('the merge event names the newborn body, so juice can key off it', () => {

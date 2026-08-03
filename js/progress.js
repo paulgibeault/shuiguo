@@ -45,15 +45,20 @@ export function newDiscoveries(discovered, events) {
   return found;
 }
 
-// A chain is a run of merges resolved inside one tick, and `chain` on each
-// merge event counts up through it. The batch the host drains can hold more
-// than one tick's worth of merges, so "the chain that just finished" is any
-// value that is not immediately followed by a deeper one — a 1,2,3,1,2 batch
-// completed a 3-chain and then a 2-chain.
+// A chain is a run of merges inside one wall-time window (js/game.js
+// §bumpChain), and `chain` on each merge event counts up through it. The batch
+// the host drains can hold more than one chain's worth of merges, so "the chain
+// that just finished" is any value that is not immediately followed by a deeper
+// one — a 1,2,3,1,2 batch completed a 3-chain and then a 2-chain.
 //
-// Returns the completed chain sizes in order, so a caller that only cares
-// about the big one can take the max and a caller that wants a banner per
-// chain can have that too.
+// Since the window went to wall time, the LAST run in a batch is usually not
+// finished at all: a combo alive at the end of the frame will deepen in the
+// next one. It is still reported, because a 3-chain in flight is a 3-chain that
+// happened — what the caller does with it is the caller's rule.
+//
+// Returns the chain sizes in order, so a caller that only cares about the big
+// one can take the max and a caller that wants a banner per chain can have
+// that too.
 export function completedChains(events) {
   const out = [];
   let prev = 0;
@@ -67,7 +72,13 @@ export function completedChains(events) {
   return out;
 }
 
-// The deepest chain the batch completed, or 0. What the banner reads.
+// The deepest chain the batch REACHED, or 0 — which is what the banner reads.
+//
+// Deliberately not "the chain that completed": a windowed combo can still be
+// alive when the host drains, so the depth that just completed is unknowable at
+// drain time. Firing on the deepest depth reached instead means a deepening
+// combo re-shows (3-chain! → 4-chain!) as it grows, which is the behaviour the
+// player is watching for anyway.
 export function deepestChain(events) {
   let best = 0;
   for (const n of completedChains(events)) if (n > best) best = n;

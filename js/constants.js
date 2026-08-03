@@ -208,4 +208,12 @@ export const RULES = {
   impactEventMs: 150,   // per-body rate limit on bounce events (settling pile
                         // must not spam the juice layer)
   spawnGraceContact: true, // a fruit can't trip the deadline until first contact
+  // A combo is measured in WALL TIME, not in physics ticks. A tick is ~4ms of
+  // sim, so a tick-scoped chain only ever counted merges that were born already
+  // touching — the gravity-fed cascade the player actually watches happen spans
+  // hundreds of ticks and used to be credited as a row of 1-chains. This is the
+  // window between one merge and the next for them to count as the same combo,
+  // and it is generous on purpose: a pile settling into its second merge is the
+  // thing being credited.
+  chainWindowMs: 1800,
 };
