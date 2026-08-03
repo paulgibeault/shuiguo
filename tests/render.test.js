@@ -12,7 +12,9 @@ import assert from 'node:assert/strict';
 import { makeRenderer } from '../js/render.js';
 import { makeGame, start } from '../js/game.js';
 import { makeRng } from '../js/arcade-rng.js';
-import { FRIEND_LEVEL } from '../js/constants.js';
+import { FRIENDS } from '../js/constants.js';
+
+const FRIEND_LEVEL = FRIENDS[0].level;
 
 function stubCanvas() {
   const calls = [];

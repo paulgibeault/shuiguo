@@ -529,15 +529,41 @@ test('REGRESSION: start() re-rolls from the rng exactly as it always did', () =>
 });
 
 // A crate-backed draw: hands out `stock` in order, then null forever.
+//
+// `crated` is declared, not inferred from the injected dropper. Being fed by
+// something other than the rng and running OUT are two different facts, and a
+// friend's stall (js/friends.js) is the first thing to be the one without being
+// the other — an infinite sky, weighted differently.
 function cratedGame(stock) {
   const left = stock.slice();
   const now = makeClock();
-  const g = makeGame({ rng: makeRng(5), now, drawFruit: () => (left.length ? left.shift() : null) });
+  const g = makeGame({
+    rng: makeRng(5), now, crated: true,
+    drawFruit: () => (left.length ? left.shift() : null),
+  });
   assert.equal(g.current, null, 'a crated game tipped fruit out before it opened');
   start(g);
   g.events.length = 0;
   return { g, now, left };
 }
+
+// An injected dropper WITHOUT a crate: the friend's-stall case. It primes its
+// dropper like any endless board, and stays as strict as free play about what a
+// save may put in its hands.
+test('an injected dropper is not by itself a crate', () => {
+  const g = makeGame({ rng: makeRng(5), now: makeClock(), drawFruit: () => 3 });
+  assert.equal(g.crated, false, 'a weighted dropper was mistaken for a finite harvest');
+  assert.equal(g.current, 3, 'an endless board did not prime its dropper');
+  assert.equal(g.next, 3);
+
+  // free play's own bound, unchanged: a watermelon in the hand never happened
+  assert.equal(restore(g, {
+    v: 1, score: 0, current: MAX_LEVEL, next: 1, fruits: [],
+  }), false, 'a friend\'s stall accepted a fruit it could never spawn');
+  assert.equal(restore(g, {
+    v: 1, score: 0, current: null, next: null, fruits: [],
+  }), false, 'a friend\'s stall accepted the empty hand only a crate can have');
+});
 
 test('a crate feeds the dropper instead of the rng, and empties exactly', () => {
   const { g, now } = cratedGame([1, 2, 3, 4]);
@@ -655,7 +681,7 @@ test('a crated board saves and restores its big fruit and its empty hands', () =
   const save = serialize(g);
   assert.equal(save.current, 9);
 
-  const g2 = makeGame({ rng: makeRng(0), now: makeClock(), drawFruit: () => null });
+  const g2 = makeGame({ rng: makeRng(0), now: makeClock(), crated: true, drawFruit: () => null });
   assert.ok(restore(g2, save), 'a campaign board would not restore');
   assert.equal(g2.current, 9);
   assert.equal(g2.next, 7);
@@ -664,7 +690,7 @@ test('a crated board saves and restores its big fruit and its empty hands', () =
   // …and the sold-out end state round-trips too
   const { g: g3, now: n3 } = cratedGame([1]);
   drop(g3, 100); sim(g3, n3, 1);
-  const g4 = makeGame({ rng: makeRng(0), now: makeClock(), drawFruit: () => null });
+  const g4 = makeGame({ rng: makeRng(0), now: makeClock(), crated: true, drawFruit: () => null });
   assert.ok(restore(g4, serialize(g3)));
   assert.ok(isSoldOut(g4));
 });
@@ -672,7 +698,7 @@ test('a crated board saves and restores its big fruit and its empty hands', () =
 test('free play stays exactly as strict about a save as it always was', () => {
   const now = makeClock();
   const free = makeGame({ rng: makeRng(1), now });
-  const crated = makeGame({ rng: makeRng(1), now, drawFruit: () => 1 });
+  const crated = makeGame({ rng: makeRng(1), now, crated: true, drawFruit: () => 1 });
 
   // a level free play could never have spawned
   const big = { v: 1, current: 11, next: 1, fruits: [] };

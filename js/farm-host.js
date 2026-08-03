@@ -37,7 +37,7 @@ import {
 } from './plant-art.js';
 import { countdown, money } from './format.js';
 import { makeEffects, pruneEffects, resetEffects, dropletAt, floatAt, FX } from './effects.js';
-import { paintChip } from './chips.js';
+import { fruitCard, lockedCard, paintCardsIn } from './cards.js';
 import { sfx } from './sfx.js';
 
 const $ = (id) => document.getElementById(id);
@@ -568,19 +568,8 @@ export function makeFarmHost({ canvas, save, getSettings, wallNow, loop, rng, on
     return out;
   }
 
-  // A locked seed is a figure, not a button: there is nothing to click, so
-  // there is nothing to tab to either. The chip painter draws the real fruit and
-  // knows nothing about progress — style.css flattens it to a silhouette, the
-  // same treatment (and the same class) the menu's collection chart uses.
   function lockedSeedCard(level) {
-    const cell = document.createElement('figure');
-    cell.className = 'seed-card locked';
-    cell.innerHTML =
-      '<canvas class="chip-art" role="img" aria-label="Undiscovered fruit"></canvas>' +
-      '<span class="seed-hanzi">?</span>';
-    cell.setAttribute('aria-label', 'Locked seed — merge one at market to earn it');
-    cell.dataset.level = String(level);
-    return cell;
+    return lockedCard(level, 'Locked seed — merge one at market to earn it');
   }
 
   // The campaign's own record, quietly, at the bottom of the drawer. Display
@@ -597,43 +586,15 @@ export function makeFarmHost({ canvas, save, getSettings, wallNow, loop, rng, on
     el.hidden = false;
   }
 
-  // A seed as a chip card: the real fruit at its best, what it is called in both
-  // languages, and the one number that matters here — its price in the shop, or
-  // how many are in the drawer when the question is what to plant.
-  //
-  // It carries the bilingual name for the same reason the discovery cards do:
-  // this is a game about learning eleven fruit, and the shop is where a player
-  // spends the most time reading. The card also wears the fruit's OWN colour, as
-  // a custom property the stylesheet mixes into the border and the wash — so the
-  // grid reads as a row of specific fruit rather than a row of boxes, and the
-  // one table that decides what a cherry looks like stays js/constants.js.
-  //
-  // Unaffordable cards are greyed, never hidden — seeing what you cannot afford
-  // yet is most of the reason to go and earn it.
+  // A seed as a fruit card (js/cards.js). The shop's version of the idiom: the
+  // meta line is a price when the question is what to buy and a count when it
+  // is what to plant, and the quiet second line is how many are already in the
+  // drawer.
   function seedCard(level, meta, affordable, go, held) {
-    const f = FRUITS[level - 1];
-    const cell = document.createElement('button');
-    cell.type = 'button';
-    cell.className = affordable ? 'seed-card' : 'seed-card off';
-    cell.disabled = !affordable;
-    cell.style.setProperty('--fruit', f.color);
-    cell.innerHTML =
-      '<canvas class="chip-art" role="img"></canvas>' +
-      '<span class="seed-hanzi"></span><span class="seed-pinyin"></span>' +
-      '<span class="seed-en"></span><span class="seed-price"></span>' +
-      '<span class="seed-held"></span>';
-    cell.querySelector('.seed-hanzi').textContent = f.hanzi;
-    cell.querySelector('.seed-pinyin').textContent = f.pinyin;
-    cell.querySelector('.seed-en').textContent = f.name;
-    cell.querySelector('.seed-price').textContent = meta;
-    cell.querySelector('.seed-held').textContent = held > 0 ? `×${held} held` : '';
-    const art = cell.querySelector('.chip-art');
-    art.setAttribute('aria-label', f.name);
-    cell.setAttribute('aria-label', `${f.name} ${f.hanzi} ${f.pinyin}, ${meta}`);
-    cell.addEventListener('click', go);
-    // painted after append by the caller's parent being visible; see paintCards
-    cell.dataset.level = String(level);
-    return cell;
+    return fruitCard({
+      level, meta, enabled: affordable, onPick: go,
+      note: held > 0 ? `×${held} held` : '',
+    });
   }
 
   // Chip canvases measure 0 while their sheet is display:none, so every card is
@@ -645,9 +606,7 @@ export function makeFarmHost({ canvas, save, getSettings, wallNow, loop, rng, on
   function paintCards() {
     for (const [sheet, grid] of CARD_GRIDS) {
       if ($(sheet).hidden) continue;
-      for (const cell of $(grid).children) {
-        paintChip(cell.querySelector('.chip-art'), Number(cell.dataset.level), 0.3);
-      }
+      paintCardsIn($(grid));
     }
   }
 
@@ -712,6 +671,12 @@ export function makeFarmHost({ canvas, save, getSettings, wallNow, loop, rng, on
     const ready = canGoToMarket(c);
     $('to-market').classList.toggle('ready', ready);
     $('to-market').disabled = !ready;
+    // Nothing to carry down the hill and nothing about to ripen: a friend could
+    // use a hand. A badge on the way out, never a summons — and derived right
+    // here on every look, so it retires the moment the crate has anything in it
+    // without a timer existing anywhere to retire it.
+    $('farm-badge').hidden = ready || !c.farm
+      || (msUntilNextRipe(c.farm, wallNow()) ?? Infinity) <= TUNING.friendNudgeMs;
     paintCards();
     if (live) loop.kick();
   }

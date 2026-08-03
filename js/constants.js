@@ -65,15 +65,32 @@ export const FACES = [
   { eye: 0.11, gap: 0.44, eyeY: -0.15, lid: 0.12, mouth: 0.20, mouthY: 0.16, blush: 0.10 }, // watermelon — stoic
 ];
 
-// The friend whose stall you mind when you are not running your own: 草莓 the
-// strawberry, the starter crop and the cheerful wide-eyed face in FACES the
-// player has known since minute one.
+// The friends whose stalls you can mind when you are not running your own.
 //
-// The campaign pillar — no named characters, no dialog — stands: the friend is
-// a FRUIT, so they need no new art, no new name and no words beyond a button
-// and one line on the receipt. Their name, their face and their portrait all
-// come out of the tables above.
-export const FRIEND_LEVEL = 2;
+// The campaign pillar — no named characters, no dialog — stands, because a
+// friend IS a fruit: name, face, portrait and colour all come out of the tables
+// above, so the whole cast costs no new art and no new words. Each of them
+// stocks their stall differently, which is the entire mechanical difference
+// between them.
+//
+// A friend's stall opens when their seed is unlocked, and seeds are unlocked
+// only by merging that fruit in a CAMPAIGN run — so the cast is met through the
+// campaign and pays back into it. That is the loop closing in both directions,
+// and it needs no persistence of its own: `c.unlocked` already knows.
+//
+// The table is the invitation to grow this later. The proud 菠萝 running a
+// pineapple-only gag stall is sitting right there.
+export const FRIENDS = [
+  // level: the friend IS this fruit. weights: how their crate of the sky is
+  // stocked, over spawn levels 1..5. flavor: one word, both languages.
+  //
+  // Even weights are what make a stall COMPARABLE, which is why 草莓's is the
+  // only one whose runs post to the records (js/friends.js §isBalanced) — a
+  // cozy-stall high score would be a lie on the board.
+  { level: 2, weights: [1, 1, 1, 1, 1], flavor: 'Balanced 平衡' },   // 草莓 — the first friend, and always open
+  { level: 3, weights: [3, 3, 2, 1, 0], flavor: 'Cozy 悠闲' },       // 葡萄 — small fruit, long runs, chain paradise
+  { level: 6, weights: [0, 1, 1, 2, 3], flavor: 'Risky 冒险' },      // 苹果 — big stock, the board fills fast and pays fast
+];
 
 export const MAX_LEVEL = FRUITS.length;               // 11
 export const MAX_SPAWN_LEVEL = 5;                     // only 1..5 drop randomly
@@ -212,6 +229,11 @@ export const TUNING = {
   // ×1.45. Deliberately a bonus rather than the main course: chains are luck
   // steered by skill, and the tier table is the part the player chooses.
   chainBonus: 0.15,
+  // How soon a crop has to be ripening for the farm to count as having
+  // something to do. Past it, with an empty crate, the farm's menu button
+  // wears a quiet badge — a friend could use a hand. Not a summons: it retires
+  // the moment there is anything in the crate.
+  friendNudgeMs: 2 * MIN,
   // The friend's cut of a stall you minded for them (js/economy.js §friendCut).
   // Deliberately well below a real market day's takings: minding a stall is the
   // fallback activity for when the crate is empty and nothing is ripe, not the

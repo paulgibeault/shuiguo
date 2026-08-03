@@ -25,9 +25,17 @@ These came out of the design conversation and are settled:
    campaign run unlocks that seed permanently; later merges of an unlocked
    level have a small chance to grant a bonus seed. One `TUNING` knob, and
    `0` cleanly disables the drip.
-5. **Free play is untouched.** The current game becomes "Free Play" on the
-   menu, keeps its save key, score lane, and records exactly as today.
-   Campaign lives in new state keys alongside it.
+5. **Free play is untouched.** The current game keeps its save key, score lane
+   and records exactly as today. Campaign lives in new state keys alongside it.
+
+   *Revised by WP-I/WP-J (#16, #17).* Free play is now MINDING A FRIEND'S STALL
+   (看摊): the friend is a fruit out of `FRIENDS`, they perch on the plank, and
+   at close they split the till into the campaign. The plumbing above is
+   unchanged — same key, same lane, same records — and the isolation promise is
+   narrowed rather than dropped: a friend's stall may write campaign CASH and
+   nothing else. Seed unlocks stay campaign-merge-only, and only the balanced
+   stall (草莓) posts to `classic` and the records, because a specialty
+   loadout's score is not comparable with anybody else's.
 
 And the design pillars the decisions rest on:
 
@@ -126,7 +134,7 @@ simply free growth — single-player and generosity-first, we don't fight it.
 | `campaign` | campaign | cash, farm, seeds, unlocks, flags, crate (Arcade.state) |
 | `market-save` | campaign | mid-run campaign board + remaining crate + run seeds |
 | `discovered` | shared | unchanged — the global collection book |
-| scores `classic` | free play | unchanged |
+| scores `classic` | free play | unchanged — balanced stall only (#17) |
 | scores `campaign` | campaign | market-run scores, separate lane |
 
 **Seed unlocks are campaign-scoped.** The menu chart / `discovered` stays the
@@ -533,7 +541,9 @@ the integration wave, roughly 4–5 days end to end.
 
 - Fresh player: gift run → buy farm → plant/water → harvest → market → spend,
   with zero dialog and no dead ends; first session reaches farm ownership.
-- Free play byte-identical in behavior, saves, scores, records.
+- Free play byte-identical in behavior, saves, scores, records. (Held after
+  #16/#17: the rebrand is paint, the dropper is the same rng sequence for the
+  balanced stall, and the only new write is campaign cash.)
 - Closing the app anywhere loses nothing (board saves, farm is lazy-eval).
 - A week away: everything ripe, nothing rotten, no scolding.
 - `seedDripChance: 0` produces exactly zero dripped seeds.

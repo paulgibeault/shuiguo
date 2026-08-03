@@ -6,17 +6,23 @@
 // NEXT preview, promote to the dropper, aim, drop, a short input cooldown,
 // merge chains resolve, deadline check, repeat.
 //
-// WHERE THE FRUIT COMES FROM is injectable. Free play draws forever from the
-// rng across levels 1–5 (`rollSpawn`, the default, byte-identical to what it
-// always did). The campaign hands in a crate-backed draw instead: a finite
-// harvest that can hold anything up to a watermelon and returns null when it
-// runs out. That null propagates — the preview empties, then the dropper — and
-// the host reads it as "sold out" and closes the stall.
+// WHERE THE FRUIT COMES FROM is injectable, and separately, WHETHER IT RUNS
+// OUT. Free play draws forever across levels 1–5 — from the rng by default, or
+// from a friend's weighting of the same five levels, which is still an infinite
+// sky. The campaign hands in a crate-backed draw AND declares itself `crated`:
+// a finite harvest that can hold anything up to a watermelon and returns null
+// when it runs out. That null propagates — the preview empties, then the
+// dropper — and the host reads it as "sold out" and closes the stall.
+//
+// The two were one flag once (an injected dropper WAS a crate), which was fine
+// while the campaign was the only thing injecting one. It is not any more, and
+// conflating them would quietly hand a friend's stall the campaign's rules: a
+// dropper that may hold a watermelon, and a save that believes one.
 
 import { WORLD, RULES, MAX_LEVEL, MAX_SPAWN_LEVEL, PHYS, ANNIHILATE_SCORE, radiusOf, scoreOf } from './constants.js';
 import { makeBody, step } from './physics.js';
 
-export function makeGame({ rng, now, drawFruit }) {
+export function makeGame({ rng, now, drawFruit, crated = false }) {
   const g = {
     state: 'menu',
     bodies: [],
@@ -37,10 +43,11 @@ export function makeGame({ rng, now, drawFruit }) {
     events: [],          // drained by the host each frame → sfx/particles
     rng, now,
     // A crated game is finite, and it may legitimately hold fruit far bigger
-    // than anything free play ever spawns. The distinction is kept on the
-    // instance rather than read off a save, so a free-play board stays exactly
-    // as strict about a hostile save as it has always been.
-    crated: typeof drawFruit === 'function',
+    // than anything free play ever spawns. Declared by the host rather than
+    // inferred from the dropper, and kept on the instance rather than read off
+    // a save, so a free-play board stays exactly as strict about a hostile save
+    // as it has always been however its fruit are picked.
+    crated: !!crated,
     draw: typeof drawFruit === 'function' ? drawFruit : () => rollSpawn(rng),
   };
   // A menu-state game primes its dropper so the board has something to show

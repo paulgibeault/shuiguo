@@ -71,7 +71,7 @@ export function makeMarketHost({ canvas, router, save, getSettings, rng, loop, s
   }
 
   function ensureGame() {
-    if (!g) g = makeGame({ rng, now: () => performance.now(), drawFruit });
+    if (!g) g = makeGame({ rng, now: () => performance.now(), drawFruit, crated: true });
     return g;
   }
 

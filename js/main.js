@@ -10,7 +10,7 @@
 // itself is UNCHANGED — same save key, same score lane, same records, same
 // rules — and pinned that way by tests/free-play-isolation.
 
-import { FRUITS, MAX_LEVEL, PHYS, FRIEND_LEVEL } from './constants.js';
+import { FRUITS, MAX_LEVEL, PHYS, FRIENDS } from './constants.js';
 import { makeGame, start, tick, serialize, restore, inDanger } from './game.js';
 import { makeRenderer } from './render.js';
 import { bindInput } from './input.js';
@@ -24,6 +24,10 @@ import { paintChip } from './chips.js';
 import { makeRouter } from './mode.js';
 import { chainMultiplier, friendCut } from './economy.js';
 import { earn } from './campaign.js';
+import {
+  FIRST_FRIEND, friendOf, openFriends, isFriendOpen, isBalanced, weightedDraw,
+} from './friends.js';
+import { fruitCard, lockedCard, paintCardsIn } from './cards.js';
 import { multiplier } from './format.js';
 import { makeCampaignSave, bootScreen } from './campaign-save.js';
 import { makeFarmHost } from './farm-host.js';
@@ -39,7 +43,16 @@ const now = () => performance.now();
 // restored game continues the same sequence.
 const rng = makeRng((Math.random() * 0xffffffff) >>> 0);
 
-const g = makeGame({ rng, now });
+// Whose stall is being minded. The dropper reads this variable live rather than
+// closing over a friend, so choosing a different one re-stocks the sky without
+// rebuilding the game — it is the same board, the same save and the same rules
+// whoever is watching.
+//
+// And it is emphatically not a CRATE: a friend's stall is infinite, the weights
+// changing only what the sky sends down and never how much of it there is. The
+// board stays exactly as strict about a hostile save as it always was.
+let friend = FIRST_FRIEND;
+const g = makeGame({ rng, now, drawFruit: () => weightedDraw(friend.weights, rng) });
 let best = 0;
 let saveDirty = false;
 
@@ -58,9 +71,9 @@ let wasInDanger = false;
 const canvas = $('board');
 const R = makeRenderer(canvas);
 // This board is somebody's stall, and they sit on the plank and watch you work
-// it. Set once: this renderer only ever draws free play (the market has its
-// own), so there is no state to keep in step.
-R.setPerch(FRIEND_LEVEL);
+// it. Re-set whenever the stall changes hands (see beginGame); this renderer
+// only ever draws free play, so the market host's own is left alone.
+R.setPerch(friend.level);
 // Visual-only, host-owned, never saved — see js/effects.js.
 const fx = makeEffects();
 
@@ -301,13 +314,17 @@ const router = makeRouter();
 
 router
   .add('mode', { sheet: $('mode'), onEnter: paintModeBadge })
-  .add('menu', { sheet: $('menu'), onEnter: buildChart })
+  .add('menu', { sheet: $('menu'), onEnter: () => { buildChart(); buildFriends(); } })
   .add('game', { chrome: [$('hud')] })
   .add('over', { sheet: $('over') });
 
 function show(screen) { router.route(screen); }
 
-function beginGame(resumed) {
+// `who` is the friend whose stall this is; omitted it stays whoever it was,
+// which is what Again 再来 wants — you are still minding the same stall.
+function beginGame(resumed, who) {
+  if (who) friend = who;
+  R.setPerch(friend.level);
   resetEffects(fx);
   clearCards();
   hideChainBanner();
@@ -326,7 +343,10 @@ function endGame() {
   clearCards();
   hideChainBanner();
   $('final-score').textContent = String(g.score);
-  const isBest = g.score > best;
+  // A specialty stall cannot claim the best either — the banner and the record
+  // are the same claim, and it would be odd for the sheet to congratulate a
+  // score the board then refused.
+  const isBest = isBalanced(friend) && g.score > best;
   if (isBest) best = g.score;
   $('new-best').hidden = !isBest;
   show('over');
@@ -334,15 +354,25 @@ function endGame() {
   paySplit();
 
   // records/scores/stats — all fire-and-forget
-  if (g.score > 0) {
+  //
+  // The BOARD is only comparable with other boards stocked the same way, so
+  // only an evenly-stocked stall competes (js/friends.js §isBalanced). 葡萄's
+  // cozy stall rains small fruit and is a chain paradise; 苹果's fills fast and
+  // pays fast. A high score or a best chain out of either of those would be a
+  // lie sitting on the same board as everybody else's honest one.
+  //
+  // The collection book is NOT gated: a first pear is a first pear wherever you
+  // made it, and `discovered` is filled from any stall as it always was.
+  const ranked = isBalanced(friend);
+  if (ranked && g.score > 0) {
     Arcade.scores.add('classic', { score: g.score });
     Arcade.records.best('high-score', { value: g.score, direction: 'higher', format: 'integer', label: 'High score' });
   }
-  if (g.tally.chainBest > 0) {
+  if (ranked && g.tally.chainBest > 0) {
     Arcade.records.best('best-chain', { value: g.tally.chainBest, direction: 'higher', format: 'integer', label: 'Best chain' });
   }
   // Only a run we timed from its own start competes here — see runStartedAt.
-  if (runStartedAt != null && firstWatermelonAt != null) {
+  if (ranked && runStartedAt != null && firstWatermelonAt != null) {
     Arcade.records.best('fastest-watermelon', {
       value: firstWatermelonAt - runStartedAt,
       direction: 'lower',
@@ -418,15 +448,19 @@ function paySplit() {
   earn(c, cut);
   campaignSave.touch();
   campaignSave.flush();
-  const f = FRUITS[FRIEND_LEVEL - 1];
+  const f = FRUITS[friend.level - 1];
   line.textContent = `${f.hanzi} splits the till 分成 +${cut}元`;
   line.hidden = false;
 }
 
 // ── save plumbing ──────────────────────────────────────────────────────────
+// Whose stall it was rides alongside js/game.js's payload rather than inside
+// it: the game module owns a board, and who is watching it is the host's. It is
+// additive, so a save written before the cast existed resumes into 草莓's stall
+// — which is where it was, since that was the only one there was.
 function flushSave() {
   if (g.state === 'playing') {
-    Arcade.state.set(SAVE_KEY, serialize(g));
+    Arcade.state.set(SAVE_KEY, { ...serialize(g), friend: friend.level });
   }
   saveDirty = false;
 }
@@ -582,6 +616,40 @@ function buildChart() {
     // after layout, so clientWidth is the CSS size (which follows --font-scale)
     paintChip(c, i + 1, 0.3);
   });
+}
+
+// ── whose stall to mind ────────────────────────────────────────────────────
+// One card per friend, on the seed-card idiom the shop and the plot picker
+// already use (js/cards.js): the real fruit, its bilingual name, and the one
+// word that says how their stall is stocked. Friends whose seed has not been
+// earned in a campaign run are dashed silhouettes under the same hint the shop
+// gives, because it is the same rule.
+//
+// With only 草莓 open the whole chooser is hidden and the plain Play button
+// stands in for it — a menu of one is a speed bump. It is rebuilt every time
+// the menu comes up rather than once at boot, exactly like the chart, so the
+// grape you unlocked at market this evening is live by the time you look.
+
+function buildFriends() {
+  const holder = $('friends');
+  const c = campaignSave.get();
+  const open = openFriends(c);
+  holder.textContent = '';
+  // Nobody to choose between: the button below is the whole interface.
+  $('friends').hidden = open.length < 2;
+  $('friends-hint').hidden = open.length < 2 || open.length === FRIENDS.length;
+  $('play').hidden = open.length >= 2;
+  if (open.length < 2) return;
+
+  for (const f of FRIENDS) {
+    holder.appendChild(isFriendOpen(c, f)
+      ? fruitCard({
+        level: f.level, meta: f.flavor,
+        onPick: () => { sfx('menu-click'); beginGame(false, f); },
+      })
+      : lockedCard(f.level, 'A grower you have not met — merge one at market'));
+  }
+  paintCardsIn(holder);          // the sheet is up now, so the chips have a size
 }
 
 // ── the campaign ───────────────────────────────────────────────────────────
@@ -746,6 +814,12 @@ function bootFromState() {
 
   const save = Arcade.state.get(SAVE_KEY);
   if (where !== 'mode' && save && restore(g, save)) {
+    // Back to the stall you were minding. `friendOf` answers with 草莓 for
+    // anything it does not recognise, including the saves written before there
+    // was a cast — which is where those runs were, because it was the only
+    // stall there was.
+    friend = friendOf(save.friend);
+    R.setPerch(friend.level);
     bankBoardAsDiscovered();
     runStartedAt = null;             // a resumed run doesn't compete for time
     firstWatermelonAt = null;

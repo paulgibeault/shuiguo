@@ -40,7 +40,10 @@
       <button id="to-market" class="go" type="button">
         Market 市场 <span id="crate-count" class="pill">0</span>
       </button>
-      <button id="farm-to-menu" class="icon" type="button" aria-label="Menu">☰</button>
+      <!-- 🍓 on the way out when the crate is empty and nothing is ripening
+           soon: a friend could use a hand. Derived on every refresh, so it
+           retires the moment there is anything to carry down the hill. -->
+      <button id="farm-to-menu" class="icon" type="button" aria-label="Menu">☰<span id="farm-badge" class="badge" hidden>🍓</span></button>
     </header>
 
     <header id="market-hud" class="campaign-hud" hidden>
@@ -86,6 +89,12 @@
       <h1 class="sign"><span class="sign-hanzi">水果摊</span><span class="sign-name">shuǐ guǒ tān</span></h1>
       <p class="tagline">Mind the stall. Match pairs. Grow the watermelon 西瓜.</p>
       <div id="chart" class="chart" aria-label="Fruit evolution chain"></div>
+      <!-- Whose stall to mind. Hidden entirely while only 草莓's is open — a
+           menu of one is a speed bump — and the plain button below stands in
+           for it. Each friend's stall opens when their seed is earned in a
+           campaign run, so this grid IS the campaign's reach into free play. -->
+      <div id="friends" class="shop-grid" aria-label="Whose stall to mind" hidden></div>
+      <p id="friends-hint" class="hint" hidden>Merge a fruit at market to meet its grower 合并解锁</p>
       <button id="play" class="big" type="button">Mind the stall 看摊</button>
       <button id="menu-to-mode" type="button">Back</button>
       <p class="hint">Slide to aim · release to drop · two of a kind merge into the next fruit · don't cross the line</p>
