@@ -33,13 +33,18 @@ export const FX = {
 
   floatMs: 700,
   floatRise: 40,          // world units the score text drifts up
+
+  cheerMs: 1200,          // how long a watching friend wears their pleased face.
+                          // Longer than a newborn's ART.happyMs, because a
+                          // newborn is a flash and this is somebody reacting to
+                          // something you did.
 };
 
 // Chain escalation for score floats: warmer and bigger the deeper it goes.
 const CHAIN_COLORS = ['#f0a03c', '#ef7d3a', '#e04b3a'];
 
 export function makeEffects() {
-  return { droplets: [], floats: [], pops: new Map(), squashes: new Map(), seq: 0 };
+  return { droplets: [], floats: [], pops: new Map(), squashes: new Map(), cheeredAt: null, seq: 0 };
 }
 
 export function resetEffects(fx) {
@@ -47,6 +52,20 @@ export function resetEffects(fx) {
   fx.floats.length = 0;
   fx.pops.clear();
   fx.squashes.clear();
+  fx.cheeredAt = null;
+}
+
+// Somebody watching the board looks pleased for a moment. It lives here with
+// every other time-decaying visual — and behind the same door, so a face that
+// changes is one more thing reduced motion simply never sees.
+export function cheer(fx, t, reducedMotion) {
+  if (reducedMotion) return;
+  fx.cheeredAt = t;
+}
+
+// Is that moment still going? The renderer's reader, closed-form like the rest.
+export function isCheering(fx, t) {
+  return fx.cheeredAt != null && t - fx.cheeredAt < FX.cheerMs;
 }
 
 // Fold one drained game event into the effects list. `t` is the host clock
@@ -59,6 +78,7 @@ export function resetEffects(fx) {
 // It arrives as a finished string on purpose — the arithmetic behind it belongs
 // to js/economy.js, and this module has never done any.
 export function pushEvent(fx, ev, t, reducedMotion, value = null) {
+  const paid = value == null ? `+${ev.score}` : value;
   if (ev.type === 'merge') {
     if (!reducedMotion) {
       fx.pops.set(ev.id, t);
@@ -67,14 +87,13 @@ export function pushEvent(fx, ev, t, reducedMotion, value = null) {
       burst(fx, ev.x, ev.y, 6 + (ev.chain > 1 ? 4 : 2), [parent.color, parent.rind], t, FX.dropletMs, FX.dropletSpeed);
     }
     const chain = ev.chain || 1;
-    const head = value == null ? `+${ev.score}` : value;
     fx.floats.push({
       // clear of the newborn's face, and stacked upward per chain link so a
       // chain's worth of floats reads as a ladder instead of a smear
       x: ev.x,
       y: ev.y - radiusOf(ev.level) * 0.9 - (chain - 1) * 18,
       t0: t, life: FX.floatMs,
-      text: chain > 1 ? `${head} ×${chain}` : head,
+      text: chain > 1 ? `${paid} ×${chain}` : paid,
       scale: Math.min(1 + 0.18 * (chain - 1), 1.7),
       color: chain > 1 ? CHAIN_COLORS[Math.min(chain - 2, CHAIN_COLORS.length - 1)] : null,
     });
@@ -85,7 +104,7 @@ export function pushEvent(fx, ev, t, reducedMotion, value = null) {
     fx.floats.push({
       // the biggest number the board can produce, so the most legible one
       x: ev.x, y: ev.y - radiusOf(MAX_LEVEL) * 0.6, t0: t, life: FX.floatMs * 1.4,
-      text: value == null ? `+${ev.score}` : value, scale: 2.0, color: '#4f9e56', bold: true,
+      text: paid, scale: 2.0, color: '#4f9e56', bold: true,
     });
   } else if (ev.type === 'bounce') {
     if (reducedMotion) return;

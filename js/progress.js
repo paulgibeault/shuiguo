@@ -56,9 +56,10 @@ export function newDiscoveries(discovered, events) {
 // next one. It is still reported, because a 3-chain in flight is a 3-chain that
 // happened — what the caller does with it is the caller's rule.
 //
-// Returns the chain sizes in order, so a caller that only cares about the big
-// one can take the max and a caller that wants a banner per chain can have
-// that too.
+// Returns the chain sizes in order. `deepestChain` below is the only caller
+// that ships — it takes the max — but the split is kept because the batch is
+// genuinely a sequence of combos and collapsing that here would make the shape
+// of one unrecoverable.
 export function completedChains(events) {
   const out = [];
   let prev = 0;

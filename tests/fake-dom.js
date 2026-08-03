@@ -29,19 +29,30 @@ export function declaredIds() {
   return new Set([...html.matchAll(/\bid="([^"]+)"/g)].map((m) => m[1]));
 }
 
-// `texts` collects every string actually painted on the canvas, which is the
-// only way a test can read a score float — the effects list is host-private and
-// the renderer is a pure reader of it. What a popup SAYS is behaviour (WP-H
-// makes campaign floats speak 元), so it needs to be observable.
-function makeCtx(calls, texts) {
+/**
+ * A recording 2D context.
+ *
+ * `calls` is what was drawn, `texts` is every string actually painted — the
+ * only way a test can read a score float, since the effects list is host-private
+ * and the renderer is a pure reader of it. What a popup SAYS is behaviour (a
+ * campaign float speaks 元), so it has to be observable. `depth` counts
+ * save/restore, so a caller can assert a painter left the context balanced.
+ *
+ * Exported because it is not really about the fake DOM: any test that paints
+ * against a stub wants exactly this object, and a hand-rolled second copy means
+ * a painter that starts calling a new ctx method fails in two files.
+ */
+export function makeCtx(calls = [], texts = []) {
   const noop = () => {};
   const rec = (name) => () => calls.push(name);
   const recText = () => (s) => { calls.push('text'); texts.push(String(s)); };
+  let depth = 0;
   return {
+    calls, texts, get depth() { return depth; },
     canvas: null,
     globalAlpha: 1, fillStyle: '', strokeStyle: '', lineWidth: 1, lineCap: 'butt',
     font: '', textAlign: 'left', textBaseline: 'alphabetic',
-    save: noop, restore: noop, translate: noop, rotate: noop, scale: noop, clip: noop,
+    save() { depth++; }, restore() { depth--; }, translate: noop, rotate: noop, scale: noop, clip: noop,
     setTransform: noop, resetTransform: noop, setLineDash: noop, clearRect: rec('clear'),
     beginPath: noop, closePath: noop, moveTo: noop, lineTo: noop,
     quadraticCurveTo: noop, bezierCurveTo: noop, arc: noop, ellipse: noop, rect: noop,

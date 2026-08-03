@@ -103,7 +103,12 @@ export function makeMarketHost({ canvas, router, save, getSettings, rng, loop, s
     resetEffects(fx);
     if (!restore(g, raw.board)) { save.clearMarket(); return false; }
     tally = restoreTally(raw.tally);
-    runEarnings = restoreEarnings(raw.earnings);
+    // The till out of a save. Hostile-save discipline as everywhere: anything we
+    // cannot believe is 0, so a doctored save resumes with the board intact and
+    // the earnings of the part of the run it can prove — none. Stingy rather
+    // than generous, and deliberately so: this is the one field in the campaign
+    // where believing a save would be minting money.
+    runEarnings = Number.isInteger(raw.earnings) && raw.earnings >= 0 ? raw.earnings : 0;
     soldOutAt = null;
     wasInDanger = inDanger(g);
     return true;
@@ -126,15 +131,6 @@ export function makeMarketHost({ canvas, router, save, getSettings, rng, loop, s
       }
     }
     return t;
-  }
-
-  // The till out of a save. Hostile-save discipline as everywhere: anything we
-  // cannot believe is 0, which means a doctored save resumes with the board
-  // intact and the earnings of the part of the run it can prove — none. That is
-  // stingy rather than generous, and deliberately so: this is the one field in
-  // the campaign where believing a save would be minting money.
-  function restoreEarnings(raw) {
-    return Number.isInteger(raw) && raw >= 0 ? raw : 0;
   }
 
   function packTally() {

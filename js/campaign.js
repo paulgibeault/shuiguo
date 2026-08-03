@@ -22,7 +22,7 @@
 import { TUNING, MAX_LEVEL, PINEAPPLE_LEVEL } from './constants.js';
 import { isDiscoverable } from './progress.js';
 import {
-  makeStarterFarm, serialize as serializeFarm, restore as restoreFarm,
+  makeStarterFarm, msUntilNextRipe, serialize as serializeFarm, restore as restoreFarm,
 } from './farm.js';
 
 const SAVE_VERSION = 1;
@@ -247,6 +247,29 @@ export function buyFarm(c, wallNow) {
 // over nothing.
 export function canGoToMarket(c) {
   return crateSize(c) > 0;
+}
+
+// Is the opening over — is there a farm behind this player? The phase strings
+// are this module's vocabulary and stay in it: hosts asked `c.phase === 'open'`
+// in two places to mean this, which is a policy predicate spelled as a magic
+// string somewhere that has no business knowing the phase machine exists.
+export function hasFarm(c) {
+  return !!c && c.phase === 'open';
+}
+
+// Is there nothing to do up here right now?
+//
+// Nothing in the crate to carry down the hill, and nothing ripening soon enough
+// to be worth waiting for. It is the campaign's own read of its own dead spot —
+// the farm host only paints the badge — and being a predicate rather than three
+// conditions assembled in a host is what makes it testable without a DOM.
+//
+// `null` from msUntilNextRipe means nothing is on its way anywhere at all, which
+// is the emptiest the farm gets and the case that most wants pointing somewhere.
+export function couldUseAHand(c, wallNow) {
+  if (!hasFarm(c) || !c.farm || canGoToMarket(c)) return false;
+  const next = msUntilNextRipe(c.farm, wallNow);
+  return next == null || next > TUNING.friendNudgeMs;
 }
 
 // ── save / restore ─────────────────────────────────────────────────────────

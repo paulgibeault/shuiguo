@@ -14,14 +14,14 @@
 
 import { WORLD, RULES, radiusOf } from './constants.js';
 import { inDanger } from './game.js';
-import { dropletAt, floatAt, popScale, squashAmount } from './effects.js';
+import { dropletAt, floatAt, isCheering, popScale, squashAmount } from './effects.js';
 import { paintFruit, expressionFor } from './fruit-art.js';
 import {
   SCENE, PERCH_R, perchAt, themeOf,
   paintSky, paintSkyline, paintStall, paintAwning, paintLanterns, paintLeaf,
 } from './scene.js';
 
-const EMPTY_FX = { droplets: [], floats: [], pops: new Map(), squashes: new Map() };
+const EMPTY_FX = { droplets: [], floats: [], pops: new Map(), squashes: new Map(), cheeredAt: null };
 
 // A held fruit whose radius reaches the dropper's own height would be drawn
 // crossing the deadline before it was dropped. See drawHeld().
@@ -31,15 +31,14 @@ const CRATED_R = WORLD.dropperY;
 const TREMBLE_MS = 1000;
 const TREMBLE_MAX = 1;          // world units — deliberately barely-there
 
-// How long a perched fruit wears its pleased face after being cheered. Longer
-// than a newborn's ART.happyMs, because a newborn is a flash and this is
-// somebody reacting to something you did.
-const PERCH_CHEER_MS = 1200;
-
 // A perched fruit is scenery, not a body, but the blink machinery keys off an
 // id — so it gets a fixed synthetic one. Fixed, so its blinks are the same
 // every session; distinctive, so it never shares a phase with a real body.
-const PERCH_ID = 0x9e3779b9;
+// Built once: the perch is at the same place, at the same size, on every frame
+// of every session, and rebuilding it 60 times a second would be 60 objects a
+// second of pure garbage.
+const PERCHED = { id: 0x9e3779b9 };
+const PERCH = perchAt(PERCH_R);
 
 export function makeRenderer(canvas) {
   const ctx = canvas.getContext('2d');
@@ -48,8 +47,13 @@ export function makeRenderer(canvas) {
   // a mode: this file has no idea what a friend or a campaign is, only that it
   // has been asked to draw a fruit on the scene's perch. Null draws nothing,
   // which is every board that has nobody minding it.
+  //
+  // Their MOOD is not here — it decays over time, so it lives on the effects
+  // list with every other decaying visual and arrives through draw().
   let perchLevel = null;
-  let cheeredAt = null;
+  // One options object, mutated in place. drawPerched runs every frame and this
+  // is the only field that ever changes.
+  const perchOpts = { expression: 'neutral' };
 
   // The view is fitted to the world PLUS the stall's side planks, which live
   // just outside it (x < 0 and x > WORLD.width). Fitting the bare world hid
@@ -91,7 +95,7 @@ export function makeRenderer(canvas) {
     paintLeaf(ctx, th, tMs, motion);
     // In FRONT of the awning it is tucked under, behind every fruit — scenery
     // with a face, never something the pile can land on.
-    drawPerched(tMs, settings.reducedMotion);
+    drawPerched(fx, tMs, settings.reducedMotion);
 
     drawDeadline(g, th, tMs, motion);
     if (g.state === 'playing' && g.current != null) drawGhost(g, th);
@@ -140,17 +144,17 @@ export function makeRenderer(canvas) {
   // vocabulary — no second drawing of anything.
   //
   // Under reduced motion they are simply present and neutral: expressionFor
-  // already refuses to blink, and the cheer is suppressed here because a face
-  // that changes is motion however briefly it lasts.
-  function drawPerched(tMs, reducedMotion) {
+  // already refuses to blink, and js/effects.js refuses to record a cheer at
+  // all — a face that changes is motion however briefly it lasts, and it is
+  // turned away at the same door as everything else that moves.
+  function drawPerched(fx, tMs, reducedMotion) {
     if (perchLevel == null) return;
-    const p = perchAt(PERCH_R);
-    const cheering = !reducedMotion && cheeredAt != null && tMs - cheeredAt < PERCH_CHEER_MS;
+    perchOpts.expression = isCheering(fx, tMs)
+      ? 'happy'
+      : expressionFor(PERCHED, tMs, reducedMotion);
     ctx.save();
-    ctx.translate(p.x, p.y);
-    paintFruit(ctx, perchLevel, PERCH_R, {
-      expression: cheering ? 'happy' : expressionFor({ id: PERCH_ID }, tMs, reducedMotion),
-    });
+    ctx.translate(PERCH.x, PERCH.y);
+    paintFruit(ctx, perchLevel, PERCH_R, perchOpts);
     ctx.restore();
   }
 
@@ -303,10 +307,10 @@ export function makeRenderer(canvas) {
 
   return {
     resize, draw, toWorldX,
-    // Who is watching, and a way to make them look pleased. Both are the
-    // host's to decide; neither teaches this file anything about modes.
-    setPerch(level) { perchLevel = level == null ? null : level; cheeredAt = null; },
-    cheer(tMs) { cheeredAt = tMs; },
+    // Who is watching. The host's to decide, and it teaches this file nothing
+    // about modes — their mood rides in on the effects list like every other
+    // decaying visual, so there is no second channel to keep in step.
+    setPerch(level) { perchLevel = level == null ? null : level; },
   };
 }
 

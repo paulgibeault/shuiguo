@@ -41,6 +41,18 @@ function pad(n) { return n < 10 ? `0${n}` : String(n); }
  * numbers use, and a stat row that reads 4.320 in one place and 4,320 in
  * another looks broken rather than localized.
  */
+export function money(n) {
+  if (typeof n !== 'number' || !isFinite(n)) return '0';
+  const whole = Math.abs(Math.trunc(n));
+  const digits = String(whole);
+  let out = '';
+  for (let i = 0; i < digits.length; i++) {
+    if (i > 0 && (digits.length - i) % 3 === 0) out += ',';
+    out += digits[i];
+  }
+  return n < 0 ? `-${out}` : out;
+}
+
 /**
  * A multiplier, as short as it can honestly be: two decimals at most, and no
  * trailing zeros — 1.45, 1.5, 2, never 1.50 or 2.00.
@@ -53,16 +65,4 @@ function pad(n) { return n < 10 ? `0${n}` : String(n); }
 export function multiplier(n) {
   if (typeof n !== 'number' || !isFinite(n)) return '1';
   return n.toFixed(2).replace(/\.?0+$/, '');
-}
-
-export function money(n) {
-  if (typeof n !== 'number' || !isFinite(n)) return '0';
-  const whole = Math.abs(Math.trunc(n));
-  const digits = String(whole);
-  let out = '';
-  for (let i = 0; i < digits.length; i++) {
-    if (i > 0 && (digits.length - i) % 3 === 0) out += ',';
-    out += digits[i];
-  }
-  return n < 0 ? `-${out}` : out;
 }

@@ -113,19 +113,30 @@ test('a market save cannot mint a till out of nothing', async () => {
   }
 });
 
+// A player who has been through the opening: gift run played out, farm bought,
+// money in the till. Five tests wanted this and each was re-deriving it; the
+// opening sequence lives here now, and `farmedGame` below is this plus the tap
+// that walks into it.
+function farmedCampaign({ cash = TUNING.firstRunFloor, met = [], crate = false } = {}) {
+  const c = makeCampaign();
+  finishFirstRun(c, cash);
+  buyFarm(c, Date.now());
+  if (!crate) c.crate = Object.create(null);
+  // seeds earned at market, which is the only way a grower is met
+  for (const f of met) noteMerges(c, makeRunTally(), [{ type: 'merge', level: f.level }]);
+  return packCampaign(c);
+}
+
 // A market board that merges itself on the very first tick: two pears sitting
 // inside each other's radius. Every test that needs a real 元 figure out of the
 // host uses this rather than trying to drop and aim its way into a merge.
 const MERGING_PEARS = { v: 1, score: 0, current: 7, next: 7, fruits: [[7, 130, 490], [7, 230, 490]], rngState: 3 };
 
 async function resumedMarket(state = {}) {
-  const c = makeCampaign();
-  finishFirstRun(c, TUNING.firstRunFloor * 4);
-  buyFarm(c, Date.now());
   return bootGame({
     settings: { reducedMotion: true },
     state: {
-      [CAMPAIGN_KEY]: packCampaign(c),
+      [CAMPAIGN_KEY]: farmedCampaign({ cash: TUNING.firstRunFloor * 4, crate: true }),
       [MARKET_KEY]: { v: 1, board: MERGING_PEARS, tally: {}, earnings: 0 },
       ...state,
     },
@@ -229,7 +240,7 @@ test('reduced motion still shows what a merge paid', async () => {
 // nothing at all, exactly as before.
 
 test('a player with no campaign minds the stall and writes not one campaign key', async () => {
-  const { $, arcade } = await mindedStall({ campaign: false });
+  const { $, arcade } = await mindedStall({ campaign: null });
   finishStall($, arcade);
   arcade.runTimers();
   arcade.fire('suspend');
@@ -244,7 +255,7 @@ test('a player with no campaign minds the stall and writes not one campaign key'
 });
 
 test('minding a stall still saves its own board under its own key', async () => {
-  const { $, arcade } = await mindedStall({ campaign: false });
+  const { $, arcade } = await mindedStall({ campaign: null });
   arcade.tick(3);
   arcade.runTimers();
   arcade.fire('suspend');
@@ -259,21 +270,14 @@ const TOPPLED_STALL = {
   fruits: [[7, 180, 492.5], [8, 180, 380], [7, 180, 267.5], [8, 180, 155], [7, 180, 42.5]],
 };
 
-// `campaign` is true for a plain farmed campaign, false for none at all, or a
-// packed one to be specific about who has been met. `who` is whose stall it is,
-// which rides on the save exactly as it does for a real resumed run.
-async function mindedStall({ campaign = true, score = 430, who = null } = {}) {
+// `campaign` is a packed campaign, or null for a player who has never opened
+// one. `who` is whose stall it is, riding on the save exactly as it does for a
+// real resumed run.
+async function mindedStall({ campaign = farmedCampaign(), score = 430, who = null } = {}) {
   const save = { ...TOPPLED_STALL, score };
   if (who) save.friend = who.level;
   const state = { save };
-  if (campaign === true) {
-    const c = makeCampaign();
-    finishFirstRun(c, TUNING.firstRunFloor);
-    buyFarm(c, Date.now());
-    state[CAMPAIGN_KEY] = packCampaign(c);
-  } else if (campaign) {
-    state[CAMPAIGN_KEY] = campaign;
-  }
+  if (campaign) state[CAMPAIGN_KEY] = campaign;
   const booted = await bootGame({ settings: { reducedMotion: true }, state });
   assert.equal(screen(booted.$), 'game', 'the stall never opened');
   booted.before = booted.arcade.state.get(CAMPAIGN_KEY);
@@ -337,15 +341,6 @@ test('the split survives a reload, because it is flushed at the moment it is pai
 // is the campaign reaching into free play the same way the friend's split
 // reaches back. The chooser is where that shows up.
 
-// A campaign that has met `met` — an array of FRIENDS entries past the first.
-function metCampaign(met = []) {
-  const c = makeCampaign();
-  finishFirstRun(c, TUNING.firstRunFloor);
-  buyFarm(c, Date.now());
-  for (const f of met) noteMerges(c, makeRunTally(), [{ type: 'merge', level: f.level }]);
-  return packCampaign(c);
-}
-
 test('with only 草莓 open there is no chooser — a menu of one is a speed bump', async () => {
   const { $ } = await bootGame();
   $('play-free').fire('click');
@@ -358,7 +353,7 @@ test('with only 草莓 open there is no chooser — a menu of one is a speed bum
 });
 
 test('meeting a grower at market puts their stall in the chooser next time', async () => {
-  const { $ } = await bootGame({ state: { [CAMPAIGN_KEY]: metCampaign([FRIENDS[1]]) } });
+  const { $ } = await bootGame({ state: { [CAMPAIGN_KEY]: farmedCampaign({ met: [FRIENDS[1]] }) } });
   $('play-free').fire('click');
   assert.equal($('friends').hidden, false, 'the chooser never appeared');
   assert.equal($('play').hidden, true, 'the chooser and the button were both up');
@@ -378,7 +373,7 @@ test('meeting a grower at market puts their stall in the chooser next time', asy
 });
 
 test('the chooser says how each stall is stocked, in both languages', async () => {
-  const { $ } = await bootGame({ state: { [CAMPAIGN_KEY]: metCampaign([FRIENDS[1]]) } });
+  const { $ } = await bootGame({ state: { [CAMPAIGN_KEY]: farmedCampaign({ met: [FRIENDS[1]] }) } });
   $('play-free').fire('click');
   const text = [...$('friends').children].map((c) => c.textContent).join(' ');
   assert.ok(text.includes('草莓'), 'the chooser does not name the fruit');
@@ -387,7 +382,7 @@ test('the chooser says how each stall is stocked, in both languages', async () =
 });
 
 test('picking a stall from the chooser opens THAT stall, and remembers it', async () => {
-  const { $, arcade } = await bootGame({ state: { [CAMPAIGN_KEY]: metCampaign([FRIENDS[1]]) } });
+  const { $, arcade } = await bootGame({ state: { [CAMPAIGN_KEY]: farmedCampaign({ met: [FRIENDS[1]] }) } });
   $('play-free').fire('click');
   const cozy = [...$('friends').children].find((c) => c.dataset.level === String(FRIENDS[1].level));
   cozy.fire('click');
@@ -401,7 +396,7 @@ test('picking a stall from the chooser opens THAT stall, and remembers it', asyn
 });
 
 test('a resumed run comes back to the stall it was in, and an old save to 草莓\'s', async () => {
-  const cozy = await mindedStall({ who: FRIENDS[1], campaign: metCampaign([FRIENDS[1]]) });
+  const cozy = await mindedStall({ who: FRIENDS[1], campaign: farmedCampaign({ met: [FRIENDS[1]] }) });
   finishStall(cozy.$, cozy.arcade);
   assert.ok(cozy.$('friend-cut').textContent.includes('葡萄'), 'the wrong friend was paid');
 
@@ -422,7 +417,7 @@ test('a specialty stall pays the split but posts no record — the board stays h
   assert.ok(fair.arcade.records.all['high-score'], 'a balanced run set no high score');
   assert.ok(fair.arcade.records.all['best-chain'], 'a balanced run set no best chain');
 
-  const risky = await mindedStall({ who: FRIENDS[2], campaign: metCampaign([FRIENDS[2]]) });
+  const risky = await mindedStall({ who: FRIENDS[2], campaign: farmedCampaign({ met: [FRIENDS[2]] }) });
   finishStall(risky.$, risky.arcade);
   assert.ok(!risky.arcade.scores.lanes.some((s) => s.lane === 'classic'),
     'a specialty stall posted to the arcade board');
@@ -438,7 +433,7 @@ test('a specialty stall pays the split but posts no record — the board stays h
 // The collection book is NOT gated. A first pear is a first pear wherever you
 // made it, and the chart is a book of fruit rather than a leaderboard.
 test('the collection book still fills from a specialty stall', async () => {
-  const { arcade } = await mindedStall({ who: FRIENDS[2], campaign: metCampaign([FRIENDS[2]]) });
+  const { arcade } = await mindedStall({ who: FRIENDS[2], campaign: farmedCampaign({ met: [FRIENDS[2]] }) });
   const found = arcade.stats.get('discovered');
   assert.ok(found && found.levels.includes(8), 'the peach on the counter was not recorded');
 });
@@ -451,11 +446,11 @@ test('the collection book still fills from a specialty stall', async () => {
 function quietFarm() {
   const c = makeCampaign();
   finishFirstRun(c, TUNING.firstRunFloor * 2);
-  buyFarm(c, Date.now() - 30 * 60 * 1000);
+  buyFarm(c, Date.now() - 30 * 60 * 1000);   // long enough that it all came ripe
   const now = Date.now();
   evaluateFarm(c.farm, now);
   for (const { ti, pi, plot } of eachPlot(c.farm)) if (isRipe(plot)) harvest(c.farm, ti, pi, now);
-  c.crate = Object.create(null);          // …and the harvest was sold at market
+  c.crate = Object.create(null);             // …and the harvest was sold at market
   return packCampaign(c);
 }
 
@@ -576,11 +571,7 @@ test('tapping the 出售 sign buys the farm, and the farm arrives planted', asyn
 // A player who has been through the opening: gift run played out (so the gift
 // crate is gone, the way a real run empties it), farm bought, money in the till.
 async function farmedGame(cash = TUNING.firstRunFloor * 2) {
-  const c = makeCampaign();
-  finishFirstRun(c, cash);
-  buyFarm(c, Date.now());
-  c.crate = Object.create(null);
-  const booted = await bootGame({ state: { [CAMPAIGN_KEY]: packCampaign(c) } });
+  const booted = await bootGame({ state: { [CAMPAIGN_KEY]: farmedCampaign({ cash }) } });
   booted.$('play-campaign').fire('click');
   return booted;
 }

@@ -23,7 +23,7 @@ import {
 } from './farm.js';
 import {
   spend, seedCount, takeSeed, addSeeds, unlockedLevels, isUnlocked, harvestInto, crateSize,
-  buyFarm, canBuyFarm, canGoToMarket,
+  buyFarm, canBuyFarm, canGoToMarket, couldUseAHand,
 } from './campaign.js';
 import { canBuy, priceOfSeed, priceOfTerrace, priceOfEquipment } from './economy.js';
 import {
@@ -672,11 +672,10 @@ export function makeFarmHost({ canvas, save, getSettings, wallNow, loop, rng, on
     $('to-market').classList.toggle('ready', ready);
     $('to-market').disabled = !ready;
     // Nothing to carry down the hill and nothing about to ripen: a friend could
-    // use a hand. A badge on the way out, never a summons — and derived right
-    // here on every look, so it retires the moment the crate has anything in it
-    // without a timer existing anywhere to retire it.
-    $('farm-badge').hidden = ready || !c.farm
-      || (msUntilNextRipe(c.farm, wallNow()) ?? Infinity) <= TUNING.friendNudgeMs;
+    // use a hand. A badge on the way out, never a summons — and asked on every
+    // look rather than armed, so it retires the moment the crate has anything in
+    // it without a timer existing anywhere to retire it.
+    $('farm-badge').hidden = !couldUseAHand(c, wallNow());
     paintCards();
     if (live) loop.kick();
   }

@@ -127,10 +127,22 @@ test('only an evenly stocked stall counts as comparable', () => {
   for (const f of FRIENDS.slice(1)) {
     assert.ok(!isBalanced(f), `${f.flavor} is being treated as comparable`);
   }
-  assert.ok(!isBalanced({ weights: [0, 0, 0, 0, 0] }), 'an empty stall passed as balanced');
-  assert.ok(!isBalanced({}), 'a friend with no weights passed as balanced');
-  assert.ok(!isBalanced(null));
   assert.ok(isBalanced({ weights: [4, 4, 4, 4, 4] }), 'even is even at any scale');
+
+  // The gate asks what the stall actually DROPS, not what its literal says.
+  // A short list is a lopsided stall wearing an even-looking table: [1, 1, 1]
+  // sends down three of the five levels, and its scores are comparable with
+  // nothing — which is the whole reason the gate exists.
+  assert.ok(!isBalanced({ weights: [1, 1, 1] }), 'a stall dropping 3 of 5 levels passed as balanced');
+  // …and by the same token, weight past the last spawnable level is not a
+  // lopsided stall, it is a table saying nothing. It still drops 1–5 evenly.
+  assert.ok(isBalanced({ weights: [1, 1, 1, 1, 1, 1, 1] }), 'weight on a level nobody can spawn counted');
+
+  // …and a stall nobody described is not one anybody vouched for, even though
+  // the playability fallback happens to make it drop evenly.
+  for (const junk of [{ weights: [0, 0, 0, 0, 0] }, {}, { weights: 'lots' }, null, undefined]) {
+    assert.ok(!isBalanced(junk), `${JSON.stringify(junk)} passed as balanced`);
+  }
 });
 
 test('the table is well formed — one real fruit each, and 草莓 first', () => {

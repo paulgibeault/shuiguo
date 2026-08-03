@@ -9,33 +9,19 @@
 // else about why.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { makeCtx } from './fake-dom.js';
 import { makeRenderer } from '../js/render.js';
 import { makeGame, start } from '../js/game.js';
 import { makeRng } from '../js/arcade-rng.js';
+import { makeEffects, resetEffects, cheer, isCheering, FX } from '../js/effects.js';
 import { FRIENDS } from '../js/constants.js';
 
 const FRIEND_LEVEL = FRIENDS[0].level;
 
+// The recording context is tests/fake-dom's — a painter that starts calling a
+// new ctx method should fail in one place, not four.
 function stubCanvas() {
-  const calls = [];
-  let depth = 0;
-  const ctx = {
-    calls, get depth() { return depth; },
-    canvas: null,
-    globalAlpha: 1, fillStyle: '', strokeStyle: '', lineWidth: 1, lineCap: 'butt',
-    font: '', textAlign: 'left', textBaseline: 'alphabetic',
-    save() { depth++; }, restore() { depth--; },
-    translate() {}, rotate() {}, scale() {}, clip() {},
-    setTransform() {}, resetTransform() {}, setLineDash() {}, clearRect() {},
-    beginPath() {}, closePath() {}, moveTo() {}, lineTo() {},
-    quadraticCurveTo() {}, bezierCurveTo() {}, arc() {}, ellipse() {}, rect() {},
-    fillRect() { calls.push('fill'); }, strokeRect() { calls.push('stroke'); },
-    fill() { calls.push('fill'); }, stroke() { calls.push('stroke'); },
-    fillText() { calls.push('text'); }, strokeText() { calls.push('text'); },
-    measureText: () => ({ width: 10 }),
-    createRadialGradient: () => ({ addColorStop() {} }),
-    createLinearGradient: () => ({ addColorStop() {} }),
-  };
+  const ctx = makeCtx();
   return { width: 400, height: 700, getContext: () => ctx, ctx };
 }
 
@@ -84,34 +70,37 @@ test('a perched friend is still there under reduced motion', () => {
   assert.ok(paintCount(R, g, still, 0, canvas.ctx) > empty, 'reduced motion took the friend away');
 });
 
-// The cheer is a face, and a face that changes is motion however brief. Under
-// reduced motion the friend keeps the one expression they had.
-test('cheering a friend changes nothing that reduced motion can see', () => {
-  const canvas = stubCanvas();
-  const R = makeRenderer(canvas);
-  const g = idleGame();
-  R.setPerch(FRIEND_LEVEL);
+// The cheer is a face, and a face that changes is motion however brief. It is
+// turned away at js/effects.js's door like everything else that moves, so under
+// reduced motion there is nothing for the renderer to suppress.
+test('a cheer never gets past the door under reduced motion', () => {
+  const fx = makeEffects();
+  cheer(fx, 0, true);
+  assert.equal(fx.cheeredAt, null, 'a cheer got through reduced motion');
+  assert.ok(!isCheering(fx, 10));
 
-  const still = { theme: 'light', fontScale: 1, reducedMotion: true };
-  const before = paintCount(R, g, still, 0, canvas.ctx);
-  R.cheer(0);
-  assert.equal(paintCount(R, g, still, 10, canvas.ctx), before, 'a cheer got through reduced motion');
+  cheer(fx, 0, false);
+  assert.ok(isCheering(fx, 10), 'a cheer was not recorded at all');
+  assert.ok(!isCheering(fx, FX.cheerMs + 1), 'the pleased face never wore off');
 });
 
-// Setting a new friend must clear the last one's mood with them — otherwise
-// walking into 葡萄's stall would find them already delighted about a chain
+// The mood lives on the effects list with every other decaying visual, so it is
+// cleared by the one reset path rather than by a second, narrower channel —
+// walking into 葡萄's stall must not find them already delighted about a chain
 // somebody else's board made.
-test('taking over a different stall starts its friend on a fresh face', () => {
+test('starting a run clears the last stall\'s mood along with its juice', () => {
   const canvas = stubCanvas();
   const R = makeRenderer(canvas);
   const g = idleGame();
   const settings = { theme: 'light', fontScale: 1, reducedMotion: false };
+  const fx = makeEffects();
 
   R.setPerch(FRIEND_LEVEL);
-  R.cheer(0);
+  cheer(fx, 0, false);
+  resetEffects(fx);
+  assert.equal(fx.cheeredAt, null, 'the mood outlived the run it belonged to');
+
   R.setPerch(6);
-  // no assertion on pixels — the observable is that draw stays clean and the
-  // cheer does not survive, which the next draw would otherwise carry
-  R.draw(g, settings, 100);
+  R.draw(g, settings, 100, fx);
   assert.equal(canvas.ctx.depth, 0, 'the renderer left the context unbalanced');
 });

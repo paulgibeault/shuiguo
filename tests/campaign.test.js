@@ -9,13 +9,13 @@ import {
   earn, spend, seedCount, isUnlocked, addSeeds, takeSeed, unlockedLevels,
   crateSize, harvestInto, drawFromCrate, countOf, totalCount, levelsIn,
   makeRunTally, noteMerges, rollSeedDrip,
-  finishFirstRun, canBuyFarm, buyFarm, canGoToMarket,
+  finishFirstRun, canBuyFarm, buyFarm, canGoToMarket, hasFarm, couldUseAHand,
   serialize, restore,
 } from '../js/campaign.js';
 import { TUNING, MAX_LEVEL, PINEAPPLE_LEVEL } from '../js/constants.js';
 import { appraise } from '../js/economy.js';
 import { makeRng } from '../js/arcade-rng.js';
-import { plotAt, isRipe } from '../js/farm.js';
+import { plotAt, isRipe, eachPlot, evaluateFarm, harvest } from '../js/farm.js';
 
 const T0 = 1_700_000_000_000;
 const merge = (level) => ({ type: 'merge', level });
@@ -387,4 +387,46 @@ test('a restored gift run still has its crate and can still be played', () => {
   assert.equal(back.phase, 'gift-run');
   assert.ok(canGoToMarket(back));
   assert.equal(crateSize(back), crateSize(makeCampaign()));
+});
+
+// ── the two questions the hosts used to answer for themselves ──────────────
+// Both of these are campaign POLICY. They lived in hosts — one as a `c.phase
+// === 'open'` string comparison in two places, one as three conditions
+// assembled beside a DOM write — and being here is what makes them testable
+// without booting a game.
+
+test('hasFarm is the whole of "is the opening over"', () => {
+  const c = makeCampaign();
+  assert.ok(!hasFarm(c), 'the gift run already had a farm');
+  finishFirstRun(c, TUNING.firstRunFloor);
+  assert.ok(!hasFarm(c), 'coming up short of the farm counted as owning one');
+  buyFarm(c, T0);
+  assert.ok(hasFarm(c));
+  assert.ok(!hasFarm(null));
+  assert.ok(!hasFarm({}));
+});
+
+test('a friend could use a hand only when there is genuinely nothing to do here', () => {
+  const c = makeCampaign();
+  finishFirstRun(c, TUNING.firstRunFloor);
+  // no farm yet: there is plenty to do, and it is buying one
+  assert.ok(!couldUseAHand(c, T0), 'a player who has not bought the farm was sent away');
+
+  buyFarm(c, T0);
+  // the starter farm arrives with a bed half grown and a crate of gift fruit
+  assert.ok(!couldUseAHand(c, T0), 'a farm with a crop coming was sent away');
+
+  c.crate = Object.create(null);
+  assert.ok(!couldUseAHand(c, T0), 'a crop landing inside the nudge window was ignored');
+
+  // everything picked and sold, and the orchard partway through its cycle
+  const later = T0 + 30 * 60 * 1000;
+  evaluateFarm(c.farm, later);
+  for (const { ti, pi, plot } of eachPlot(c.farm)) if (isRipe(plot)) harvest(c.farm, ti, pi, later);
+  c.crate = Object.create(null);
+  assert.ok(couldUseAHand(c, later), 'the quiet farm offered the player nothing at all');
+
+  // …and anything in the crate retires it at once: there is a trip to make
+  harvestInto(c, { level: 1, count: 1 });
+  assert.ok(!couldUseAHand(c, later), 'a full crate still pointed away from the farm');
 });

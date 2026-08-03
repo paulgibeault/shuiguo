@@ -21,6 +21,10 @@
 import { FRUITS } from './constants.js';
 import { paintChip } from './chips.js';
 
+// How much of a card's chip canvas the fruit fills. One number for every grid
+// that uses this idiom, which is the point of the idiom.
+const CHIP_SHARE = 0.3;
+
 /**
  * One fruit, as something to press.
  *
@@ -77,9 +81,9 @@ export function lockedCard(level, label) {
 }
 
 /** Paint every card in a holder. Call it only while the holder is visible. */
-export function paintCardsIn(holder, share = 0.3) {
+export function paintCardsIn(holder) {
   for (const cell of holder.children) {
     const art = cell.querySelector('.chip-art');
-    if (art) paintChip(art, Number(cell.dataset.level), share);
+    if (art) paintChip(art, Number(cell.dataset.level), CHIP_SHARE);
   }
 }

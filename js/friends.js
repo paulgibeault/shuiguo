@@ -43,12 +43,45 @@ export function isFriendOpen(c, friend) {
   return !!c && isUnlocked(c, friend.level);
 }
 
+// What a stall ACTUALLY has in it: one bucket per spawn level, whatever the
+// table happened to write down. Short lists are padded with zeros and anything
+// that is not a positive integer counts as nothing, so a stall with an empty sky
+// falls back to an even spread rather than being unplayable.
+//
+// Everything that reasons about a stall's stock goes through here, which is the
+// point of it existing. Judging the raw literal instead let `[1, 1, 1]` read as
+// evenly stocked to the records gate while it was in fact dropping only three of
+// the five levels — ranked, and not comparable with anything.
+// `fallback` says the table gave us nothing usable and this spread was invented
+// to keep the stall playable — which the records gate needs to know, because a
+// stall nobody described is not a stall anybody vouched for.
+function stockOf(weights) {
+  const ws = [];
+  let total = 0;
+  const list = Array.isArray(weights) ? weights : [];
+  for (let i = 0; i < MAX_SPAWN_LEVEL; i++) {
+    const w = list[i];
+    const n = Number.isInteger(w) && w > 0 ? w : 0;
+    ws.push(n);
+    total += n;
+  }
+  if (total > 0) return { ws, total, fallback: false };
+  ws.fill(1);
+  return { ws, total: MAX_SPAWN_LEVEL, fallback: true };
+}
+
 // Is this stall stocked evenly enough for its scores to mean the same thing as
 // everybody else's? See the note at the top: this is the records gate.
+//
+// Asked of the stock that is actually PLAYED, never of the literal in the
+// table: judging the literal let `[1, 1, 1]` read as evenly stocked while it was
+// in fact dropping three of the five levels — ranked, and comparable with
+// nothing. A stall running on the invented fallback is not comparable either,
+// even though it happens to play evenly, because nothing described it.
 export function isBalanced(friend) {
-  const w = friend && friend.weights;
-  if (!Array.isArray(w) || !w.length) return false;
-  return w.every((n) => n === w[0] && n > 0);
+  if (!friend) return false;
+  const { ws, fallback } = stockOf(friend.weights);
+  return !fallback && ws.every((n) => n === ws[0]);
 }
 
 // One draw from a friend's stock.
@@ -59,23 +92,8 @@ export function isBalanced(friend) {
 // free play has always used. 草莓's stall is not a re-implementation of the old
 // dropper; it is the old dropper, reached a different way. tests/friends pins
 // that against the real generator.
-//
-// Hostile weights never throw: anything that is not a non-negative integer
-// counts as zero, and a stall with nothing in it at all falls back to an even
-// spread rather than to an empty sky.
 export function weightedDraw(weights, rng) {
-  const ws = [];
-  let total = 0;
-  for (let i = 0; i < MAX_SPAWN_LEVEL; i++) {
-    const w = Array.isArray(weights) ? weights[i] : null;
-    const n = Number.isInteger(w) && w > 0 ? w : 0;
-    ws.push(n);
-    total += n;
-  }
-  if (total <= 0) {
-    ws.fill(1);
-    total = MAX_SPAWN_LEVEL;
-  }
+  const { ws, total } = stockOf(weights);
 
   let pick = Math.floor(rng() * total);
   if (!(pick >= 0)) pick = 0;
