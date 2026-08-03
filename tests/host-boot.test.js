@@ -15,7 +15,7 @@ import assert from 'node:assert/strict';
 import { bootGame } from './fake-dom.js';
 import { TUNING, RULES } from '../js/constants.js';
 import { FREE_PLAY_KEYS, CAMPAIGN_KEYS, CAMPAIGN_KEY, MARKET_KEY } from '../js/campaign-save.js';
-import { makeCampaign, finishFirstRun, buyFarm, harvestInto, serialize as packCampaign } from '../js/campaign.js';
+import { makeCampaign, finishFirstRun, buyFarm, harvestInto, noteMerges, makeRunTally, serialize as packCampaign } from '../js/campaign.js';
 
 // One drop, cooldown and all. js/game.js locks input for RULES.dropCooldownMs
 // of REAL time (it runs on performance.now()), so a test that only spins the
@@ -221,13 +221,89 @@ test('the shop sells what the player has unlocked, and greys what they cannot af
   $('to-shop').fire('click');
   assert.equal($('shop').hidden, false);
   const cards = [...$('shop-seeds').children];
-  assert.equal(cards.length, 1, 'the shop offered a seed the player has not unlocked');
-  assert.equal(cards[0].disabled, false, 'a rich player could not buy a cherry sapling');
+  const buyable = cards.filter((c) => !c.classList.contains('locked'));
+  assert.equal(buyable.length, 1, 'the shop sold a seed the player has not unlocked');
+  assert.equal(buyable[0].disabled, false, 'a rich player could not buy a cherry sapling');
 
   // and equipment is offered, priced, and greyed when out of reach
   const rows = [...$('shop-kit').children];
   assert.ok(rows.length >= 2, 'the shop sells no equipment at all');
   assert.ok(rows.some((r) => r.disabled), 'stream irrigation was affordable on day one');
+});
+
+// A chip canvas measures 0 while its sheet is display:none, so every seed card
+// has to be painted AFTER its own sheet is up. The plot picker was never painted
+// at all, and showed a grid of named blanks with the fruit missing.
+test('a seed card is painted the moment its own sheet opens, in either sheet', async () => {
+  const c = makeCampaign();
+  finishFirstRun(c, TUNING.firstRunFloor * 2);
+  buyFarm(c, Date.now());
+  c.crate = Object.create(null);
+  // the drawer's strawberries come with the farm, but the RIGHT to plant them is
+  // earned at market — so earn it, or the picker has nothing to offer
+  noteMerges(c, makeRunTally(), [{ type: 'merge', level: 2 }]);
+  const { $, arcade } = await bootGame({ state: { [CAMPAIGN_KEY]: packCampaign(c) } });
+  $('play-campaign').fire('click');
+  arcade.tick(1);
+
+  $('to-shop').fire('click');
+  assertPainted([...$('shop-seeds').children].filter((x) => !x.classList.contains('locked')), 'the shop');
+  $('shop-close').fire('click');
+
+  // the starter terrace's last bed is bare, and tapping bare earth is the one
+  // tap on the farm that opens a picker
+  $('board').fire('pointerup', { clientX: 311, clientY: 536 });
+  assert.equal($('plot').hidden, false, 'tapping bare earth opened nothing');
+  assertPainted([...$('plot-seeds').children], 'the plot picker');
+});
+
+function assertPainted(cards, where) {
+  assert.ok(cards.length > 0, `${where} offered no seeds at all`);
+  for (const cell of cards) {
+    const art = cell.querySelector('.chip-art');
+    assert.ok(art, `a card in ${where} has no art element`);
+    assert.ok(art.width > 0 && art.height > 0,
+      `a card in ${where} was never painted — its canvas is ${art.width}×${art.height}`);
+  }
+}
+
+// The unlock rule — merge one at market and you may plant it — is the campaign's
+// whole progression, and until now the shop simply did not mention it. Locked
+// levels show as silhouettes, capped at a few, and go away as they are earned.
+test('the shop shows the next few seeds you have not earned, and says how', async () => {
+  const { $ } = await farmedGame();
+  $('to-shop').fire('click');
+  const locked = [...$('shop-seeds').children].filter((c) => c.classList.contains('locked'));
+  assert.ok(locked.length > 0 && locked.length <= 3, `${locked.length} silhouettes is not "the next few"`);
+  assert.equal($('shop-locked-hint').hidden, false, 'the silhouettes came with no way to earn them');
+  for (const cell of locked) {
+    assert.notEqual(cell.tagName, 'BUTTON', 'a locked seed is a figure, not a button to tab to');
+    assert.ok(cell.getAttribute('aria-label').includes('Locked'), 'a locked seed reads as a fruit');
+  }
+  // the first silhouette is the very next level, not a random one further up
+  assert.equal(locked[0].dataset.level, '2');
+});
+
+// Everything here was already being banked by the market host; the shop just
+// never showed it back. Nothing new is counted.
+test('the farm keeps a quiet record, and shows none of it before there is one', async () => {
+  const fresh = await farmedGame();
+  fresh.$('to-shop').fire('click');
+  assert.equal(fresh.$('shop-stats').hidden, true, 'day one already had a record to boast about');
+
+  const { $, arcade } = await bootGame();
+  $('play-campaign').fire('click');
+  arcade.tick(2);
+  $('pack-up').fire('click');
+  arcade.tick(1);
+  $('appraisal-done').fire('click');
+  $('board').fire('pointerup', { clientX: 180, clientY: 505 });
+  $('plot-rows').children[0].fire('click');     // buy the farm, so the shop opens
+  $('to-shop').fire('click');
+
+  assert.equal($('shop-stats').hidden, false, 'a market day left no trace');
+  assert.match($('shop-stats').textContent, /Market days 1/);
+  assert.match($('shop-stats').textContent, /Earned [\d,]+元/);
 });
 
 test('tapping a bare bed opens the picker; tapping a thirsty plant waters it outright', async () => {
@@ -332,7 +408,7 @@ test('beat one: the gift crate pulses, and stops the moment it is used', async (
   arcade.tick(1);
 });
 
-test('beat one is the gift run only — an ordinary market day gets no pulse', async () => {
+test('beat one is the gift run only — an ordinary market day gets neither pulse nor card', async () => {
   const c = makeCampaign();
   finishFirstRun(c, TUNING.firstRunFloor * 2);
   buyFarm(c, Date.now());
@@ -343,6 +419,7 @@ test('beat one is the gift run only — an ordinary market day gets no pulse', a
   $('to-market').fire('click');
   assert.equal(screen($), 'market');
   assert.ok(!$('crate-strip').classList.contains('pulse'), 'the tutorial came back uninvited');
+  assert.equal($('cards').children.length, 0, 'and it brought its card');
 });
 
 test('beat two: the camera pans up the mountain, once, and a tap lands it', async () => {
@@ -392,20 +469,83 @@ test('beat three: buying the farm plays the one card the campaign has', async ()
   assert.ok(card.textContent.includes('农场'));
 });
 
+// Every beat of the opening is one card, and each one fires on a phase
+// transition — which is why none of them needs remembering: a phase the
+// campaign has left is a phase it never returns to.
+test('the opening says its three things, one card per beat, in order', async () => {
+  const { $, arcade } = await bootGame();
+  const seen = drainCards($, arcade, () => {
+    $('play-campaign').fire('click');            // beat one: what a market day is for
+    arcade.tick(2);
+    $('pack-up').fire('click');
+    arcade.tick(1);
+    $('appraisal-done').fire('click');           // beat two: the farm is for sale
+    $('board').fire('pointerup', { clientX: 180, clientY: 505 });
+    $('plot-rows').children[0].fire('click');    // beat three: it is yours
+  });
+
+  assert.equal(seen.length, 3, `the opening played ${seen.length} cards: ${seen.join(' / ')}`);
+  assert.ok(seen[0].includes('合并'), 'beat one never said merging is the point');
+  assert.ok(seen[1].includes('出售'), 'beat two never named the sign it pans to');
+  assert.ok(seen[2].includes('你的农场'), 'beat three: the farm changed hands without a word');
+});
+
 test('the campaign never puts more than a handful of words on screen at once', async () => {
   // Design pillar: very light narrative. No dialog boxes, no named characters,
   // no cutscene text — a card is a kicker and a bilingual name, and that is all
-  // the prose the campaign is allowed.
+  // the prose the campaign is allowed. Held over EVERY card of the opening, not
+  // just the last one: three beats is three chances to start writing dialog.
   const { $, arcade } = await bootGame();
+  const seen = drainCards($, arcade, () => {
+    $('play-campaign').fire('click');
+    arcade.tick(2);
+    $('pack-up').fire('click');
+    arcade.tick(1);
+    $('appraisal-done').fire('click');
+    $('board').fire('pointerup', { clientX: 180, clientY: 505 });
+    $('plot-rows').children[0].fire('click');
+  });
+
+  assert.ok(seen.length > 0, 'no card was played at all');
+  for (const text of seen) {
+    const words = text.split(/\s+/).filter(Boolean);
+    assert.ok(words.length <= 8, `a card runs to ${words.length} words: ${text}`);
+  }
+});
+
+// Play `walk`, then run the card queue out and collect every card it showed, in
+// the order it showed them. Only one card is up at a time (they queue rather
+// than stack), so the queue has to be pumped to see past the first.
+function drainCards($, arcade, walk) {
+  const seen = [];
+  const collect = () => {
+    for (const card of $('cards').children) {
+      if (!seen.includes(card.textContent)) seen.push(card.textContent);
+    }
+  };
+  walk();
+  for (let i = 0; i < 8; i++) { collect(); arcade.runTimers(); }
+  collect();
+  return seen;
+}
+
+// The Market button is live during `buy-farm`, so a player short of 500元 can go
+// back and earn it — which means the appraisal lands in `buy-farm` more than
+// once, and the opening's camera move must not replay every time.
+test('coming back short of the farm replays neither the pan nor its card', async () => {
+  const c = makeCampaign();
+  finishFirstRun(c, 100);                       // nowhere near the price of the farm
+  const { $, arcade } = await bootGame({ state: { [CAMPAIGN_KEY]: packCampaign(c) } });
   $('play-campaign').fire('click');
+  assert.equal(screen($), 'farm');
+  assert.equal($('to-market').disabled, false, 'the leftover gift crate was unsellable');
+
+  $('to-market').fire('click');                 // a second market day, before the farm
+  assert.equal(screen($), 'market');
   arcade.tick(2);
   $('pack-up').fire('click');
   arcade.tick(1);
   $('appraisal-done').fire('click');
-  $('board').fire('pointerup', { clientX: 180, clientY: 505 });
-  $('plot-rows').children[0].fire('click');
-
-  const card = $('cards').children[0];
-  const words = card.textContent.split(/\s+/).filter(Boolean);
-  assert.ok(words.length <= 8, `the farm card runs to ${words.length} words: ${card.textContent}`);
+  assert.equal(screen($), 'farm');
+  assert.equal($('cards').children.length, 0, 'the opening card came back for an encore');
 });

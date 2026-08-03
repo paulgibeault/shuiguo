@@ -14,23 +14,28 @@
 // date against wall time first, which is what makes closing the app for a week
 // cost nothing and why this file never schedules anything but its own repaint.
 
-import { WORLD, TUNING, FRUITS } from './constants.js';
+import { WORLD, TUNING, FRUITS, MAX_LEVEL } from './constants.js';
 import {
-  evaluateFarm, eachPlot, plotAt, isRipe, progressOf, needsWater, msUntilNextRipe,
+  evaluateFarm, eachPlot, plotAt, isRipe, progressOf, needsWater,
+  msUntilNextRipe, msUntilRipeAt, soonestRipening,
   canPlant, plant, water, harvest, fertilize, buildTrellis,
   addTerrace, nextTerraceIndex, installSprinkler, installIrrigation,
 } from './farm.js';
 import {
-  spend, seedCount, takeSeed, addSeeds, unlockedLevels, harvestInto, crateSize,
-  buyFarm, canBuyFarm,
+  spend, seedCount, takeSeed, addSeeds, unlockedLevels, isUnlocked, harvestInto, crateSize,
+  buyFarm, canBuyFarm, canGoToMarket,
 } from './campaign.js';
 import { canBuy, priceOfSeed, priceOfTerrace, priceOfEquipment } from './economy.js';
 import {
   FARM_SCENE, farmThemeOf, plotGeom, plotAtPoint, forSaleBox,
   paintFarmSky, paintRidges, paintHillside, paintTerrace, paintForSale,
-  paintStream, paintFog, paintLanterns,
+  paintTerracePrice, paintStream, paintFog, paintLanterns, paintFireflies,
 } from './farm-scene.js';
-import { paintPlant, paintSoil, paintTrellis, paintGlint } from './plant-art.js';
+import {
+  paintPlant, paintSoil, paintTrellis, paintGlint,
+  paintProgressRing, paintCountdown, paintPlantHint,
+} from './plant-art.js';
+import { countdown, money } from './format.js';
 import { makeEffects, pruneEffects, resetEffects, dropletAt, floatAt, FX } from './effects.js';
 import { paintChip } from './chips.js';
 import { sfx } from './sfx.js';
@@ -51,6 +56,10 @@ const POUR_COOLDOWN_MS = 900;
 // thing it is pointing at.
 const PAN_MS = 1500;
 const PAN_FROM = 150;      // world units below the settled view
+
+// How far up the chain the shop lets you peer. Three silhouettes read as "the
+// next few"; all nine would read as a wall of things you cannot have.
+const LOCKED_PEEK = 3;
 
 export function makeFarmHost({ canvas, save, getSettings, wallNow, loop, rng, onFarmBought }) {
   const fx = makeEffects();
@@ -110,19 +119,32 @@ export function makeFarmHost({ canvas, save, getSettings, wallNow, loop, rng, on
     // hillside reads as stacked rather than as stripes.
     for (let i = 0; i < FARM_SCENE.bands; i++) paintTerrace(ctx, th, i, i < owned);
     if (c.farm) {
+      const now = wallNow();
       const plots = eachPlot(c.farm);
       const thirstyGlints = !plots.some(({ plot }) => isRipe(plot));
-      for (const p of plots) drawPlot(p, tMs, motion, thirstyGlints);
+      // ONE countdown on the whole mountain. The plot it belongs to is asked of
+      // the farm, not chosen here — the host does not get to have an opinion
+      // about which crop is soonest.
+      const next = soonestRipening(c.farm, now);
+      const canSow = (ti, pi) => canSowIn(c, ti, pi);
+      for (const p of plots) drawPlot(p, tMs, motion, thirstyGlints, canSow, now);
+      if (next) drawCountdown(next);
+    }
+
+    // Every shelf ABOVE the one for sale wears its price, small and unlit. One
+    // sign is the offer; these are the ladder it stands at the bottom of.
+    for (let i = (forSaleIndex(c) ?? owned) + 1; i < FARM_SCENE.bands; i++) {
+      paintTerracePrice(ctx, th, i, priceOfTerrace(i));
     }
 
     // One thing for sale at a time — the next shelf up the mountain, or, before
     // there is a farm at all, the bottom one with the whole farm attached to it.
     const forSale = forSaleIndex(c);
     if (forSale != null) {
-      paintForSale(ctx, th, forSale);
+      const price = c.farm ? priceOfTerrace(forSale) : priceOfEquipment('farm');
+      paintForSale(ctx, th, forSale, price, tMs, motion);
       // A glint on the sign while it is affordable — the same "tap me" the ripe
       // fruit wears, because it is the same instruction.
-      const price = c.farm ? priceOfTerrace(forSale) : priceOfEquipment('farm');
       if (canBuy(c.cash, price)) {
         const box = forSaleBox(forSale);
         ctx.save();
@@ -135,27 +157,60 @@ export function makeFarmHost({ canvas, save, getSettings, wallNow, loop, rng, on
     pruneEffects(fx, tMs);
     drawPour(tMs);
     paintFog(ctx, th, tMs, motion);
+    paintFireflies(ctx, th, tMs, motion);
     paintLanterns(ctx, th, tMs, motion);
     drawFloats(tMs, settings);
   }
 
-  function drawPlot({ ti, pi, plot, watered }, tMs, motion, thirstyGlints) {
+  // A plot's identity, as one integer. It phases the sway and the blinks so a
+  // terrace does not lean or wink in unison, and it has to be the SAME number
+  // every frame for the same plot — which is why it is derived from the address
+  // rather than from anything that moves.
+  function seedOf(ti, pi) { return ti * 31 + pi * 7; }
+
+  function drawPlot({ ti, pi, plot, watered }, tMs, motion, thirstyGlints, canSow, now) {
     const g = plotGeom(ti, pi, N);
-    const wet = watered || plot.wateredUntilMs > wallNow();
+    const wet = watered || plot.wateredUntilMs > now;
+    const growing = !!plot.kind && !isRipe(plot);
     ctx.save();
     ctx.translate(g.cx, g.groundY);
-    paintSoil(ctx, g.w * 0.86, FARM_SCENE.soilH + 2, { wet });
+    paintSoil(ctx, g.w * 0.86, FARM_SCENE.soilH + 2, { wet, bare: !plot.kind });
+    // Behind the plant: a ring the crop grows over as it fills, so every plot
+    // says how far along it is without anything having to be read.
+    if (growing) paintProgressRing(ctx, g.h, progressOf(plot));
     if (plot.trellis) paintTrellis(ctx, g.w * 0.8, g.h);
     paintPlant(ctx, {
       kind: plot.kind, level: plot.level, progress: progressOf(plot),
       mature: plot.mature, ripe: isRipe(plot), trellis: plot.trellis,
-    }, g.h, { tMs, motion });
+    }, g.h, { tMs, motion, seed: seedOf(ti, pi) });
+    // 种 over ground that is bare AND has something in the drawer to go in it.
+    if (!plot.kind && canSow(ti, pi)) paintPlantHint(ctx, g.h, tMs, motion);
     // Thirst glints only when there is nothing ripe anywhere. It is the same
     // instruction as a ripe glint — one tap, here — and scoping it this way
     // keeps the guidance of the opening without a farm in full production
     // twinkling at the player from every dry bed it owns.
     if (thirstyGlints && !wet && plot.kind && !isRipe(plot)) paintGlint(ctx, g.h * 0.7, tMs, motion);
     ctx.restore();
+  }
+
+  function drawCountdown({ ti, pi, ms }) {
+    const g = plotGeom(ti, pi, N);
+    ctx.save();
+    ctx.translate(g.cx, g.groundY);
+    paintCountdown(ctx, countdown(ms), g.h);
+    ctx.restore();
+  }
+
+  // Is there anything in the drawer that would go in THIS plot right now? Asked
+  // of `canPlant` — the same predicate the plot sheet fills itself from — so the
+  // hint on the ground and the seeds in the sheet can never disagree about what
+  // is plantable. A bare bench with only vine seeds held is not sowable, and
+  // correctly wears no hint: what it needs is a trellis, which the sheet sells.
+  function canSowIn(c, ti, pi) {
+    for (const level of unlockedLevels(c)) {
+      if (seedCount(c, level) > 0 && !canPlant(c.farm, ti, pi, level)) return true;
+    }
+    return false;
   }
 
   // Droplets and the pour arc, both closed-form readers over the shared
@@ -308,6 +363,7 @@ export function makeFarmHost({ canvas, save, getSettings, wallNow, loop, rng, on
     $('shop').hidden = true;
     $('plot').hidden = false;
     buildPlotSheet(c, plot, ti, pi);
+    paintCards();       // the sheet is up NOW, so its chips finally have a size
   }
 
   // The 出售 sheet. It sells one of two things depending on whether there is a
@@ -323,7 +379,7 @@ export function makeFarmHost({ canvas, save, getSettings, wallNow, loop, rng, on
     $('plot').hidden = false;
     $('plot-title').textContent = first ? 'The farm 农场' : `Terrace ${i + 1} 梯田`;
     $('plot-note').textContent = first
-      ? 'A weedy terrace with a young cherry tree on it, and a packet of strawberry seeds thrown in.'
+      ? 'A weedy terrace with a young cherry tree, a strawberry bed halfway up, and a packet of seeds thrown in.'
       : 'A weedy shelf further up the mountain, going cheap.';
     $('plot-seeds').textContent = '';
     rows($('plot-rows'), [{
@@ -395,9 +451,13 @@ export function makeFarmHost({ canvas, save, getSettings, wallNow, loop, rng, on
       }
     } else if (!ripe) {
       const dry = needsWater(c.farm, ti, pi, wallNow());
-      $('plot-note').textContent = dry
+      // A percentage is a number about the plot; a time is a number about the
+      // player's evening. `msUntilRipe` is null exactly when the plot is not on
+      // its way anywhere, which is the dry case the first branch already covers.
+      const left = msUntilRipeAt(c.farm, ti, pi, wallNow());
+      $('plot-note').textContent = dry || left == null
         ? 'Thirsty. Tap the plot to water it.'
-        : `Growing — ${Math.round(progressOf(plot) * 100)}% of the way there.`;
+        : `Growing — ready in ${countdown(left)}.`;
       const price = priceOfEquipment('fertilizer');
       options.push({
         label: 'Fertilize', hanzi: '肥料', price, can: canBuy(c.cash, price),
@@ -421,6 +481,7 @@ export function makeFarmHost({ canvas, save, getSettings, wallNow, loop, rng, on
     $('plot').hidden = true;
     $('shop').hidden = false;
     buildShop(c);
+    paintCards();
   }
 
   function buildShop(c) {
@@ -448,6 +509,17 @@ export function makeFarmHost({ canvas, save, getSettings, wallNow, loop, rng, on
         refresh();
       }, seedCount(c, level)));
     }
+
+    // …and then the next few the player has not earned yet, as silhouettes. The
+    // shop already greys what you cannot afford rather than hiding it, on the
+    // grounds that seeing it is most of the reason to go and earn it — this is
+    // the same argument one step further back, applied to what you cannot BUY
+    // yet at all. The rule that unlocks them (merge one at market) was
+    // previously discoverable only by accident.
+    const locked = nextLockedLevels(c);
+    for (const level of locked) grid.appendChild(lockedSeedCard(level));
+    $('shop-locked-hint').hidden = locked.length === 0;
+    showFarmStats();
 
     // Equipment: the things that stop the farm asking anything of the player.
     const kit = [];
@@ -485,25 +557,79 @@ export function makeFarmHost({ canvas, save, getSettings, wallNow, loop, rng, on
     rows($('shop-kit'), kit, 'The stream runs through every terrace. Nothing here needs water again.');
   }
 
-  // A seed as a chip card: the real fruit at its best, its price, and how many
-  // are already in the drawer. Unaffordable rows are greyed, never hidden —
-  // seeing what you cannot afford yet is most of the reason to go and earn it.
-  function seedCard(level, price, affordable, go, held) {
+  // The next few levels the player has not earned the right to plant. Capped,
+  // and that is the whole design of it: nine question marks read as a grind,
+  // three read as almost-there.
+  function nextLockedLevels(c) {
+    const out = [];
+    for (let level = 2; level <= MAX_LEVEL && out.length < LOCKED_PEEK; level++) {
+      if (!isUnlocked(c, level)) out.push(level);
+    }
+    return out;
+  }
+
+  // A locked seed is a figure, not a button: there is nothing to click, so
+  // there is nothing to tab to either. The chip painter draws the real fruit and
+  // knows nothing about progress — style.css flattens it to a silhouette, the
+  // same treatment (and the same class) the menu's collection chart uses.
+  function lockedSeedCard(level) {
+    const cell = document.createElement('figure');
+    cell.className = 'seed-card locked';
+    cell.innerHTML =
+      '<canvas class="chip-art" role="img" aria-label="Undiscovered fruit"></canvas>' +
+      '<span class="seed-hanzi">?</span>';
+    cell.setAttribute('aria-label', 'Locked seed — merge one at market to earn it');
+    cell.dataset.level = String(level);
+    return cell;
+  }
+
+  // The campaign's own record, quietly, at the bottom of the drawer. Display
+  // only — every one of these was already being banked by the market host, and
+  // nothing new is counted to show them.
+  function showFarmStats() {
+    const el = $('shop-stats');
+    const s = Arcade.stats.get('farm');
+    const days = (s && s.marketDays) || 0;
+    if (!days) { el.hidden = true; el.textContent = ''; return; }
+    const parts = [`Market days ${days}`, `Earned ${money((s && s.earned) || 0)}元`];
+    if (s.soldOut > 0) parts.push(`Sold out ${s.soldOut}`);
+    el.textContent = parts.join(' · ');
+    el.hidden = false;
+  }
+
+  // A seed as a chip card: the real fruit at its best, what it is called in both
+  // languages, and the one number that matters here — its price in the shop, or
+  // how many are in the drawer when the question is what to plant.
+  //
+  // It carries the bilingual name for the same reason the discovery cards do:
+  // this is a game about learning eleven fruit, and the shop is where a player
+  // spends the most time reading. The card also wears the fruit's OWN colour, as
+  // a custom property the stylesheet mixes into the border and the wash — so the
+  // grid reads as a row of specific fruit rather than a row of boxes, and the
+  // one table that decides what a cherry looks like stays js/constants.js.
+  //
+  // Unaffordable cards are greyed, never hidden — seeing what you cannot afford
+  // yet is most of the reason to go and earn it.
+  function seedCard(level, meta, affordable, go, held) {
     const f = FRUITS[level - 1];
     const cell = document.createElement('button');
     cell.type = 'button';
     cell.className = affordable ? 'seed-card' : 'seed-card off';
     cell.disabled = !affordable;
+    cell.style.setProperty('--fruit', f.color);
     cell.innerHTML =
       '<canvas class="chip-art" role="img"></canvas>' +
-      '<span class="seed-hanzi"></span><span class="seed-price"></span>' +
+      '<span class="seed-hanzi"></span><span class="seed-pinyin"></span>' +
+      '<span class="seed-en"></span><span class="seed-price"></span>' +
       '<span class="seed-held"></span>';
     cell.querySelector('.seed-hanzi').textContent = f.hanzi;
-    cell.querySelector('.seed-price').textContent = price;
-    cell.querySelector('.seed-held').textContent = held > 0 ? `×${held}` : '';
+    cell.querySelector('.seed-pinyin').textContent = f.pinyin;
+    cell.querySelector('.seed-en').textContent = f.name;
+    cell.querySelector('.seed-price').textContent = meta;
+    cell.querySelector('.seed-held').textContent = held > 0 ? `×${held} held` : '';
     const art = cell.querySelector('.chip-art');
     art.setAttribute('aria-label', f.name);
-    cell.setAttribute('aria-label', `${f.name} ${f.hanzi}, ${price}`);
+    cell.setAttribute('aria-label', `${f.name} ${f.hanzi} ${f.pinyin}, ${meta}`);
     cell.addEventListener('click', go);
     // painted after append by the caller's parent being visible; see paintCards
     cell.dataset.level = String(level);
@@ -577,12 +703,15 @@ export function makeFarmHost({ canvas, save, getSettings, wallNow, loop, rng, on
     const c = save.get();
     if (c.farm) evaluateFarm(c.farm, wallNow());
     $('farm-cash').textContent = String(c.cash);
-    const n = crateSize(c);
-    $('crate-count').textContent = String(n);
+    $('crate-count').textContent = String(crateSize(c));
     $('to-shop').disabled = !c.farm;
-    // the Market button glows once the crate is worth carrying down the hill
-    $('to-market').classList.toggle('ready', n > 0);
-    $('to-market').disabled = n <= 0;
+    // The button glows once the crate is worth carrying down the hill — and it
+    // asks the campaign whether the trip is possible rather than counting the
+    // crate itself, so the most eye-catching thing on the screen can never be
+    // a control that does nothing when tapped.
+    const ready = canGoToMarket(c);
+    $('to-market').classList.toggle('ready', ready);
+    $('to-market').disabled = !ready;
     paintCards();
     if (live) loop.kick();
   }

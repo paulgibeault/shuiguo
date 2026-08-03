@@ -13,6 +13,7 @@ import {
   serialize, restore,
 } from '../js/campaign.js';
 import { TUNING, MAX_LEVEL, PINEAPPLE_LEVEL } from '../js/constants.js';
+import { appraise } from '../js/economy.js';
 import { makeRng } from '../js/arcade-rng.js';
 import { plotAt, isRipe } from '../js/farm.js';
 
@@ -258,15 +259,45 @@ test('the first appraisal always buys the farm, and the farm opens the game', ()
   assert.ok(!finishFirstRun(c, 999), 'the gift run happened twice');
 });
 
-test('the market needs something to sell once the gift crate is gone', () => {
+test('the market needs something to sell, and that is the whole rule', () => {
   const c = makeCampaign();
   finishFirstRun(c, TUNING.firstRunFloor);
-  assert.ok(!canGoToMarket(c), 'went to market mid-purchase');
   buyFarm(c, T0);
   c.crate = Object.create(null);
   assert.ok(!canGoToMarket(c), 'took an empty crate to market');
   harvestInto(c, { level: 1, count: 1 });
   assert.ok(canGoToMarket(c));
+});
+
+// The crate decides, in every phase. `buy-farm` used to be excluded, which left
+// a player who came up short of the farm holding unsellable fruit and looking
+// at a lit-up Market button that did nothing.
+test('a full crate can go to market in every phase, and an empty one in none', () => {
+  for (const phase of ['gift-run', 'buy-farm', 'open']) {
+    const c = makeCampaign();
+    c.phase = phase;
+    assert.ok(canGoToMarket(c), `a full crate could not be sold in ${phase}`);
+    c.crate = Object.create(null);
+    assert.ok(!canGoToMarket(c), `an empty crate went to market in ${phase}`);
+  }
+});
+
+test('a second market day before the farm earns cash but never re-floors', () => {
+  const c = makeCampaign();
+  // the gift run: floored, and it is the only run that ever is
+  const gift = appraise({ score: 10, reason: 'packed', isFirstRun: c.phase === 'gift-run' });
+  assert.ok(gift.floorTopUp > 0, 'the gift run was not floored');
+  assert.ok(finishFirstRun(c, gift.total));
+  assert.equal(c.phase, 'buy-farm');
+  assert.equal(c.cash, TUNING.firstRunFloor);
+
+  // still short of nothing in particular — go and sell the rest of the crate
+  const second = appraise({ score: 10, reason: 'packed', isFirstRun: c.phase === 'gift-run' });
+  assert.equal(second.floorTopUp, 0, 'the floor fired twice');
+  assert.ok(!finishFirstRun(c, 99999), 'the gift run was finished a second time');
+  earn(c, second.total);
+  assert.equal(c.cash, TUNING.firstRunFloor + second.total);
+  assert.equal(c.phase, 'buy-farm', 'a second market day moved the opening along by itself');
 });
 
 test('the seed drawer hands out one seed at a time and refuses what it lacks', () => {

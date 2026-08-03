@@ -97,6 +97,23 @@ test('an annual always clears its seed in the single harvest it lives for', () =
   }
 });
 
+// Raising a tree is the investment and the crops after it are the return, so a
+// sapling the player BUYS must cycle faster than it matured. The starter cherry
+// is the one exception and the only tree nobody buys: it comes with the farm,
+// grown by somebody else, and its job is to pay off inside the first session.
+test('every tree you plant cycles faster than it matured — the given one excepted', () => {
+  for (let level = 1; level <= MAX_LEVEL; level++) {
+    if (!isPerennial(level)) continue;
+    const row = farmOf(level);
+    if (level === TUNING.starterTree) {
+      assert.ok(row.growthMs <= row.cycleMs, 'the starter tree stopped being the quick one');
+      continue;
+    }
+    assert.ok(row.cycleMs <= row.growthMs,
+      `${FRUITS[level - 1].name} takes longer to re-fruit than it took to grow`);
+  }
+});
+
 test('a perennial pays its sapling back inside a handful of cycles', () => {
   const PAYBACK_LIMIT = 6;
   for (let level = 1; level <= MAX_LEVEL; level++) {

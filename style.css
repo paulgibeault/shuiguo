@@ -14,6 +14,10 @@
   --wood-edge: #8a6742;
   --wood-ink: #4a3520;
   --rope: rgba(90, 70, 50, 0.55);
+  /* What sits behind the phone column on a window wider than a phone. The two
+   * stops are the farm's own sky (FARM_THEMES in js/farm-scene.js) — the void
+   * around the game should be the same weather as the game. */
+  --backdrop: linear-gradient(165deg, #bcd9e8, #fdf1d6);
 }
 [data-theme="dark"] {
   --paper: #221d16;
@@ -26,26 +30,34 @@
   --wood-edge: #3a2c1c;
   --wood-ink: #f0e2c8;
   --rope: rgba(232, 220, 200, 0.4);
+  --backdrop: linear-gradient(165deg, #2a2447, #4a3550);
 }
 
 * { box-sizing: border-box; margin: 0; }
 
 html, body { height: 100%; }
 body {
-  background: var(--paper);
+  background: var(--backdrop);
   color: var(--ink);
   font-family: "Avenir Next", "Hiragino Sans", system-ui, sans-serif;
   overflow: hidden;
   touch-action: none;
 }
 
+/* The game is a phone held in front of you, at every window size. Capped at a
+ * phone's width and centred, so a laptop gets the same column on the farm's own
+ * sky rather than a letterboxed strip in a void — and so nothing has to be
+ * designed twice. The height is the only thing that flexes: .stage shrinks and
+ * both renderers fit-scale into whatever CSS box they are given. */
 .frame {
   position: relative;
   height: 100dvh;
-  max-width: 34rem;
+  max-width: 28rem;
   margin: 0 auto;
   display: flex;
   flex-direction: column;
+  background: var(--paper);
+  box-shadow: 0 0 2.5rem var(--shadow);
 }
 
 /* The board plus the two surfaces that float over it without pausing it. */
@@ -71,6 +83,12 @@ body {
   padding: 0.5rem 1rem 0.25rem;
   gap: 0.75rem;
 }
+/* The router shows exactly one header and sets `hidden` on the others, and the
+ * `display: flex` above outranks that attribute's own rule — so every header in
+ * the frame needs this counterpart or it ghosts over every screen AND takes a
+ * flex row with it, pushing the canvas down. The campaign's two carry the same
+ * rule beside their own layout, below. */
+#hud[hidden] { display: none; }
 .stat { display: flex; flex-direction: column; align-items: center; min-width: 4.5rem; }
 .label {
   font-size: 0.7rem;
@@ -89,7 +107,12 @@ body {
   padding: 0.35rem 0.9rem;
   box-shadow: 0 2px 8px var(--shadow);
 }
-#next { width: 2.75rem; height: 2.75rem; }
+/* Both NEXT canvases, and this is load-bearing rather than cosmetic: js/chips.js
+ * sizes a chip's backing store from its CSS box, so a canvas with no CSS size
+ * of its own re-measures its own intrinsic size on every paint and grows a
+ * little each time. The market's used to be held down only by being squeezed in
+ * a nowrap flex row — which is not a size, it is a coincidence. */
+#next, #m-next { width: 2.75rem; height: 2.75rem; }
 .next-name { font-size: 0.7rem; opacity: 0.8; }
 
 /* ── chain banner ────────────────────────────────────────────────────────
@@ -144,6 +167,10 @@ body {
     "art    name";
   align-items: center;
   gap: 0.2rem 0.9rem;
+  /* A fruit's name is two words; the campaign's opening cards carry a sentence.
+   * Capped so the long ones wrap into the card instead of stretching it to the
+   * width of the frame. */
+  max-width: min(21rem, calc(100% - 2rem));
   padding: 0.9rem 1.3rem 1rem;
   border-radius: 1.1rem;
   border: 2px solid var(--wood-edge);
@@ -194,6 +221,12 @@ body {
   flex-direction: column;
   align-items: center;
   justify-content: center;
+  /* A laptop window in landscape is shorter than a phone, and the menu's chart
+   * is taller than it. `safe` keeps the overflow reachable instead of centring
+   * the top of the sheet out of the scroll range; engines without it fall back
+   * to the plain `center` above, which is exactly today's behaviour. */
+  justify-content: safe center;
+  overflow-y: auto;
   gap: 1rem;
   padding: 2rem 1.5rem;
   background: color-mix(in srgb, var(--paper) 88%, transparent);
@@ -329,8 +362,10 @@ button.big {
  * chart doubles as the collection book, and the blank pear is the reason to
  * go get one. contrast(0) flattens the painted fruit to a single tone, so
  * the shape survives and every cue that identifies it does not. */
-.chip.locked .chip-art { filter: grayscale(1) contrast(0) brightness(0.72); opacity: 0.42; }
-[data-theme="dark"] .chip.locked .chip-art { filter: grayscale(1) contrast(0) brightness(1.7); opacity: 0.3; }
+.chip.locked .chip-art,
+.seed-card.locked .chip-art { filter: grayscale(1) contrast(0) brightness(0.72); opacity: 0.42; }
+[data-theme="dark"] .chip.locked .chip-art,
+[data-theme="dark"] .seed-card.locked .chip-art { filter: grayscale(1) contrast(0) brightness(1.7); opacity: 0.3; }
 .chip.locked figcaption { opacity: 0.5; letter-spacing: 0.05em; }
 .arrow { font-size: 0.7rem; opacity: 0.5; align-self: center; margin-bottom: 0.6rem; }
 
@@ -377,17 +412,24 @@ button.big {
 /* 🌱 — the one nudge in the game, and it retires the moment it is acted on. */
 .badge { font-size: 0.9em; }
 
-/* What is left to sell. The crate emptying IS the run's clock, so it wants to
- * be readable at a glance and to take no room at all. Scrolls rather than
- * wrapping: a crate of nine kinds must not push the board off the screen. */
+/* What is left to sell. The crate emptying IS the run's clock, so it gets its
+ * own full-width row under the stats rather than whatever is left between the
+ * NEXT box and Pack up — squeezed in there a phone showed about one chip, which
+ * is a clock with no hands. Still scrolls rather than wrapping: a crate of nine
+ * kinds must not push the board off the screen, and the right edge fades to say
+ * so (with five kinds the fade lands on empty strip and is invisible). */
+#market-hud { flex-wrap: wrap; }
 .crate-strip {
   display: flex;
   align-items: center;
   gap: 0.3rem;
-  flex: 1;
+  flex: 1 0 100%;
+  order: 1;
   min-width: 0;
+  min-height: 2.6rem;
   overflow-x: auto;
   scrollbar-width: none;
+  mask-image: linear-gradient(90deg, #000 calc(100% - 1.4rem), transparent 100%);
 }
 .crate-strip::-webkit-scrollbar { display: none; }
 .crate-chip { display: flex; flex-direction: column; align-items: center; margin: 0; flex: none; }
@@ -427,28 +469,58 @@ button.big {
   gap: 0.45rem;
   max-width: 26rem;
 }
-/* A seed card is the real fruit at its best, its price, and how many are
- * already in the drawer. Unaffordable cards are greyed, never removed: seeing
- * what you cannot afford yet is most of the reason to go and earn it. */
+/* A seed card is the real fruit at its best, its name in both languages, and
+ * the one number that matters where it is standing — a price in the shop, a
+ * count in the drawer when the question is what to plant. Unaffordable cards
+ * are greyed, never removed: seeing what you cannot afford yet is most of the
+ * reason to go and earn it.
+ *
+ * Each card is tinted with its own fruit's --fruit (set by js/farm-host.js from
+ * the FRUITS table, so the colour lives in exactly one place). Mixed rather than
+ * used neat: a card washed in full-strength cherry red would out-shout the
+ * painted cherry sitting on it, and the fruit is the thing to look at. */
 .seed-card {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 0.05rem;
+  gap: 0.02rem;
   margin: 0;
-  padding: 0.4rem 0.5rem 0.35rem;
-  border-radius: 0.7rem;
-  border: 2px solid var(--wood-edge);
-  background: var(--card);
+  padding: 0.45rem 0.55rem 0.4rem;
+  border-radius: 0.8rem;
+  border: 2px solid color-mix(in srgb, var(--fruit, var(--wood-edge)) 45%, var(--wood-edge));
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--fruit, var(--card)) 12%, var(--card)), var(--card));
   box-shadow: 0 2px 0 var(--shadow);
-  min-width: 4rem;
+  min-width: 5rem;
+  max-width: 7rem;
 }
-.seed-card .chip-art { width: 2.4rem; height: 2.4rem; }
-.seed-hanzi { font-size: 0.8rem; line-height: 1.1; }
-.seed-price { font-size: 0.7rem; font-weight: 700; color: var(--accent); font-variant-numeric: tabular-nums; }
-.seed-held { font-size: 0.6rem; opacity: 0.7; min-height: 0.75rem; font-variant-numeric: tabular-nums; }
+.seed-card .chip-art { width: 2.6rem; height: 2.6rem; }
+.seed-hanzi { font-size: 0.9rem; line-height: 1.15; letter-spacing: 0.02em; }
+/* The learning moment, at shop scale: tone marks are the point, so the pinyin
+ * is legible rather than decorative. */
+.seed-pinyin { font-size: 0.65rem; line-height: 1.2; opacity: 0.85; }
+.seed-en { font-size: 0.6rem; line-height: 1.2; opacity: 0.55; }
+.seed-price {
+  margin-top: 0.2rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: color-mix(in srgb, var(--fruit, var(--accent)) 45%, var(--accent));
+}
+.seed-held { font-size: 0.58rem; opacity: 0.6; min-height: 0.7rem; font-variant-numeric: tabular-nums; }
 .seed-card figcaption { font-size: 0.65rem; opacity: 0.75; font-variant-numeric: tabular-nums; }
 .seed-card.off { opacity: 0.42; cursor: default; box-shadow: none; }
+/* A seed you have not EARNED yet is a silhouette under a question mark — the
+ * same language the menu's collection chart speaks, because it is the same
+ * sentence ("this exists, go and get it") about a different verb. Dashed rather
+ * than solid, so a locked card never reads as a card you failed to afford. */
+.seed-card.locked {
+  border-style: dashed;
+  background: transparent;
+  box-shadow: none;
+  cursor: default;
+}
+.seed-card.locked .seed-hanzi { opacity: 0.5; letter-spacing: 0.05em; }
 
 .shop-rows { display: flex; flex-direction: column; gap: 0.35rem; width: 100%; max-width: 26rem; }
 .shop-row {

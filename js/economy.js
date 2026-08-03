@@ -18,6 +18,12 @@ const TIDY_REASONS = new Set(['packed', 'sold-out']);
 
 export function isTidy(reason) { return TIDY_REASONS.has(reason); }
 
+// The Tidy Stall bonus as the number a button can wear. "Pack up 收摊" reads as
+// quitting when it is in fact the smart play, and the cheapest way to say so is
+// to print the reward on it — from the knob, so the button and the till can
+// never quote different percentages.
+export function tidyBonusPercent() { return Math.round(TUNING.tidyBonus * 100); }
+
 // The appraisal, itemized. The sheet in js/market-host.js lands these lines one
 // at a time — coins off each fruit, then the stamp — so every number the player
 // watches arrive has its own field here rather than being backed out of a total.

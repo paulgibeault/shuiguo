@@ -58,7 +58,13 @@ class El {
     this.hidden = false;
     this.disabled = false;
     this.dataset = {};
-    this.style = {};
+    // Enough of CSSStyleDeclaration for the hosts: named properties assigned
+    // directly (`el.style.animationDelay = …`) and custom properties set through
+    // the API, which is the only way to reach a `--var` on a real element.
+    this.style = {
+      setProperty(name, value) { this[name] = value; },
+      getPropertyValue(name) { return this[name] == null ? '' : this[name]; },
+    };
     this.attrs = {};
     this.listeners = new Map();
     this.drawCalls = [];

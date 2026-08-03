@@ -145,9 +145,42 @@ export function queueSeedCards(levels) {
   pumpCards();
 }
 
-// The one narrated moment in the campaign, and it is four words on the card
-// idiom the game already has. The art is the cherry, because the cherry tree is
-// literally what the player just bought.
+// The opening, said out loud — three cards, one per beat, on the card idiom the
+// game already has rather than a dialog system it does not want. Each is keyed
+// to a phase transition and so fires once; none of them pauses anything, and any
+// of them can be tapped away. The art is the cherry all three times, because the
+// cherry is what the player is holding, growing and about to buy.
+//
+// The word budget is the pillar, not a nicety: a card is a kicker and a
+// bilingual name and nothing else, which is why none of these explains the rule
+// it points at. The card says what matters — merging is how you earn, that
+// mountainside is for sale — and the thing itself teaches the rest.
+//
+// Beat one: what a market day is FOR. A player who is never told this drops
+// seventy fruit without a single merge and packs up with nothing, which is
+// exactly what a playtest did.
+function queueMarketCard() {
+  cardQueue.push({
+    level: 1, kicker: 'Merge to earn! 合并!',
+    hanzi: '合并', pinyin: 'hébìng', en: 'Merge', score: null,
+  });
+  pumpCards();
+}
+
+// Beat two: it lands as the camera settles on the sign it names, so "there is a
+// farm up there and it is for sale" needs no sentence — the price is painted on
+// the board the card is pointing at.
+function queueForSaleCard() {
+  cardQueue.push({
+    level: 1, kicker: 'For sale! 出售!',
+    hanzi: '出售', pinyin: 'chūshòu', en: 'The farm', score: null,
+  });
+  pumpCards();
+}
+
+// Beat three, and the one narrated moment in the campaign: four words on the
+// same card. The art is the cherry, because the cherry tree is literally what
+// the player just bought.
 function queueFarmCard() {
   cardQueue.push({
     level: 1, kicker: 'Your farm! 你的农场!',
@@ -571,6 +604,12 @@ function paintModeBadge() {
   $('campaign-badge').hidden = c.phase === 'open';
 }
 
+// Was the run being appraised the gift run? The appraisal lands in `buy-farm`
+// either way, but a player who went back to market because they came up short
+// of 500元 is not living the opening again — they already know where the farm
+// is, so the camera move and its card belong to the first arrival only.
+let cameFromGiftRun = false;
+
 // Going to market. The gift run and every run after it take the same path;
 // what differs is only what is in the crate.
 function toMarket() {
@@ -578,11 +617,14 @@ function toMarket() {
   hideChainBanner();
   const gift = campaignSave.get().phase === 'gift-run';
   if (!market.begin()) return;
+  cameFromGiftRun = gift;
   router.route('market');
-  // Beat one: the gift crate pulses beside the dropper. There is nothing to
-  // read and nothing to dismiss — the only thing on screen that moves is the
-  // thing the player is meant to use, and it stops the moment they use it.
+  // Beat one: the gift crate pulses beside the dropper, and one card says what
+  // to do with it. The pulse points at the thing to use and stops the moment it
+  // is used; the card is skippable and the first fruit is already droppable
+  // behind it, so neither one is a gate.
   $('crate-strip').classList.toggle('pulse', gift);
+  if (gift) queueMarketCard();
 }
 
 function toCampaign() {
@@ -612,11 +654,15 @@ $('appraisal-done').addEventListener('click', () => {
   // Beat two: the first time, the view pans up off the road to the weedy
   // terrace with the 出售 sign on it. One scripted camera move in the whole
   // game, and it exists so that "there is a farm up there" needs no sentence.
-  if (c.phase === 'buy-farm') farm.panUp();
+  const opening = c.phase === 'buy-farm' && cameFromGiftRun;
+  if (opening) farm.panUp();
   // After the gift run the farm is for sale, and buying it is the only move —
   // so the appraisal hands the player straight to it (js/farm-host.js stages
   // the 出售 sign) rather than asking them to find it.
   router.route(c.phase === 'gift-run' ? 'mode' : 'farm');
+  // …and the card that names the sign goes up after the route, so the farm is
+  // what it lands over rather than the appraisal sheet.
+  if (opening) queueForSaleCard();
 });
 
 // ── input ──────────────────────────────────────────────────────────────────

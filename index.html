@@ -44,7 +44,10 @@
     </header>
 
     <header id="market-hud" class="campaign-hud" hidden>
-      <div class="stat"><span class="label">Score</span><span id="m-score" class="value">0</span></div>
+      <!-- 元, not Score: during a campaign run the number IS the money, at one
+           point to the 元 (js/economy.js). Free play's HUD keeps saying Score —
+           that score is arcade pride and never buys anything. -->
+      <div class="stat"><span class="label">元</span><span id="m-score" class="value">0</span></div>
       <div class="next-box" aria-label="Next fruit">
         <span class="label">Next</span>
         <canvas id="m-next" width="48" height="48"></canvas>
@@ -120,8 +123,14 @@
       <p class="shop-cash">元 <strong id="shop-cash">0</strong></p>
       <h3 class="shop-head">Seeds 种子</h3>
       <div id="shop-seeds" class="shop-grid"></div>
+      <!-- How the locked silhouettes in that grid get unlocked. Hidden once
+           there is nothing left to unlock. -->
+      <p id="shop-locked-hint" class="hint" hidden>Merge a fruit at market to earn its seed 合并解锁</p>
       <h3 class="shop-head">The farm 农场</h3>
       <div id="shop-kit" class="shop-rows"></div>
+      <!-- The campaign's own record, from Arcade.stats. Absent until there is
+           one, because "Market days 0" is not a record, it is a scold. -->
+      <p id="shop-stats" class="hint" hidden></p>
       <button id="shop-close" type="button">Done</button>
     </section>
 

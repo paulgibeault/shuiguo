@@ -239,11 +239,14 @@ export function buyFarm(c, wallNow) {
   return true;
 }
 
-// Can the player take a stall today? The gift run always can (it IS the crate);
-// afterwards there has to be something in the crate to sell.
+// Can the player take a stall today? One rule in every phase: something has to
+// be in the crate. `buy-farm` counts — a player who came up short of the farm
+// has exactly one honest thing to do about it, which is go and earn the rest,
+// and the fruit left in the gift crate is what they earn it with. Gating that
+// phase out left the leftover crate unsellable and the Market button lit up
+// over nothing.
 export function canGoToMarket(c) {
-  if (c.phase === 'gift-run') return crateSize(c) > 0;
-  return c.phase === 'open' && crateSize(c) > 0;
+  return crateSize(c) > 0;
 }
 
 // ── save / restore ─────────────────────────────────────────────────────────

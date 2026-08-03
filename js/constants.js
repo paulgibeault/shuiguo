@@ -105,6 +105,11 @@ export const PHYS = {
 //             'vine' perennial that additionally needs a trellis on the plot
 //   growthMs  time from planting to the FIRST ripe crop
 //   cycleMs   perennials: time from harvest to ripe again. null for annuals.
+//             Faster than growthMs for every tree the player PLANTS — raising
+//             one is the investment, and the crops after it are the return.
+//             The cherry is the exception, and it is the only tree nobody
+//             plants: it comes with the farm, already grown by somebody else,
+//             so its first crop lands sooner than its steady cycle.
 //   yield     fruit per harvest, dropped into the crate
 //   cost      元 for one seed (bed) or sapling (tree/vine)
 //
@@ -120,10 +125,19 @@ export const PHYS = {
 const MIN = 60 * 1000;
 const HOUR = 60 * MIN;
 
+// The first ten minutes are their own design problem. A player who has just
+// bought a farm, planted it and watered it has nothing left to do, and the two
+// starter crops are the whole of what they are waiting on — so those two are
+// paced to the first session and everything from the grape up is left alone,
+// because the long waits ARE the come-back-later texture.
+//
+// For a perennial `growthMs` is already the one-time planting-to-first-crop
+// wait and `cycleMs` the steady state, so the cherry can pay off fast the first
+// time without touching how the orchard runs afterwards. No new column needed.
 export const FARM = [
   // level is index+1, matching FRUITS.
-  { kind: 'tree', growthMs:  4 * MIN,  cycleMs:  4 * MIN,  yield: 12, cost:   60 }, // cherry
-  { kind: 'bed',  growthMs:  3 * MIN,  cycleMs: null,      yield:  6, cost:    6 }, // strawberry
+  { kind: 'tree', growthMs:  2 * MIN,  cycleMs:  4 * MIN,  yield: 12, cost:   60 }, // cherry
+  { kind: 'bed',  growthMs: 90 * 1000, cycleMs: null,      yield:  6, cost:    6 }, // strawberry
   { kind: 'vine', growthMs:  6 * MIN,  cycleMs:  5 * MIN,  yield:  8, cost:   25 }, // grape
   { kind: 'tree', growthMs: 12 * MIN,  cycleMs:  8 * MIN,  yield:  6, cost:   90 }, // dekopon
   { kind: 'tree', growthMs: 20 * MIN,  cycleMs: 12 * MIN,  yield:  5, cost:  150 }, // persimmon
@@ -161,13 +175,22 @@ export const TUNING = {
   starterFarmCost: 500,        // terrace 1 + a young cherry tree + 4 strawberry seeds
   starterSeeds: { 2: 4 },      // what the starter farm comes planted-ready with
   starterTree: 1,              // …and the sapling already in its tree plot
+  // …and one bed that comes with the farm already half grown and watered. The
+  // tree teaches the ritual (it arrives thirsty, so the first tap is a
+  // watering); this one keeps its promise while that lesson is still warm,
+  // instead of leaving the new farm three minutes of nothing.
+  starterCrop: 2,
+  starterCropProgress: 0.5,
   terraceCosts: [0, 500, 1200, 3000, 7500, 18000],  // index 0 is the starter terrace
   plotsPerTerrace: 4,
   treePlotsPerTerrace: 1,      // one of the four takes a tree/vine; the rest are beds
   tidyBonus: 0.10,             // packed / sold-out: fraction of the subtotal
   seedDripChance: 0.15,        // 0 disables the drip exactly — no epsilon
   firstUnlockSeeds: 2,         // free packet when a level is first merged in campaign
-  waterMs: 6 * HOUR,           // one watering covers a session and then some
+  waterMs: 6 * HOUR,           // FLOOR on one watering — see js/farm.js §water:
+                               // a watering always covers at least the rest of
+                               // the current stage, so no crop is ever a
+                               // come-back-and-top-it-up treadmill
   sprinklerCost: 800,          // per terrace: that terrace is watered forever
   irrigationCost: 8000,        // whole farm, forever — the "made it" purchase
   trellisCost: 300,            // per plot, enables vines

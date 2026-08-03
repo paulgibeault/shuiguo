@@ -59,21 +59,37 @@ export function makeFarm() {
 }
 
 // The farm the first appraisal buys: one terrace with a young cherry tree
-// already in its bench, dry. The tree is the guaranteed-generosity engine (a fat
-// crate every few minutes, forever) and it is deliberately handed over THIRSTY —
-// watering is the farm's one ritual, and the opening teaches it by making the
-// player's first tap the thing that starts their first crop.
+// already in its bench, dry, and one bed already half grown and watered.
+//
+// The tree is the guaranteed-generosity engine (a fat crate every few minutes,
+// forever) and it is deliberately handed over THIRSTY — watering is the farm's
+// one ritual, and the opening teaches it by making the player's first tap the
+// thing that starts their first crop.
+//
+// The bed is the answer to what happens next. A farm that only hands over a
+// thirsty sapling asks its new owner to water it and then stare at it, which is
+// the one dead spot in the first session; a crop already halfway up pays off
+// while the feeling of planting is still warm and proves the promise rather
+// than describing it. It is not a gift of seeds — the drawer's four are
+// separate — it is what was already growing when the place changed hands.
 export function makeStarterFarm(wallNow) {
   const farm = makeFarm();
   plant(farm, 0, 0, TUNING.starterTree, wallNow);
+
+  const bed = TUNING.treePlotsPerTerrace;        // the first bed past the bench
+  plant(farm, 0, bed, TUNING.starterCrop, wallNow);
+  const plot = plotAt(farm, 0, bed);
+  plot.progressMs = stageMsOf(plot) * TUNING.starterCropProgress;
+  water(farm, 0, bed, wallNow);                  // and it sees the rest through
   return farm;
 }
 
 // ── growth ─────────────────────────────────────────────────────────────────
 
 // How long the CURRENT stage takes. A perennial's first ripening is its whole
-// growthMs (planting to first crop, one time); after that it re-fruits on the
-// shorter cycleMs, forever.
+// growthMs (planting to first crop, one time); after that it re-fruits on
+// cycleMs, forever. Which of the two is longer is the TABLE's business, not
+// this function's — see the FARM table on why the starter cherry inverts it.
 export function stageMsOf(plot) {
   if (!plot.kind) return 0;
   if (!isPerennial(plot.level)) return growthOf(plot.level);
@@ -139,6 +155,16 @@ export function msUntilRipe(plot, wallNow, watered) {
   return wateredLeft >= left ? left : null;
 }
 
+// The same question by address, for a caller holding a farm rather than a plot.
+// It exists so a host never has to work out whether a terrace is sprinklered —
+// that is a rule, and rules live here.
+export function msUntilRipeAt(farm, ti, pi, wallNow) {
+  const plot = plotAt(farm, ti, pi);
+  const terrace = farm.terraces[ti];
+  if (!plot || !terrace) return null;
+  return msUntilRipe(plot, wallNow, alwaysWatered(farm, terrace));
+}
+
 // ── the one tap per plot ───────────────────────────────────────────────────
 // Every farm interaction is a single tap, so each of these is a guarded verb
 // that reports whether it did anything. `canPlant` is the exception: the shop
@@ -175,8 +201,20 @@ export function plant(farm, ti, pi, level, wallNow) {
   return true;
 }
 
-// The ritual. Watering opens a window that growth accrues inside; it is never a
-// health bar, and watering early simply moves the window rather than stacking.
+// The ritual.
+//
+// One watering always sees the CURRENT STAGE through — `TUNING.waterMs` is the
+// floor, not the ceiling. That matters: a watermelon needs eight hours and a
+// pineapple a full day, and a fixed six-hour can would mean coming back every
+// six hours to top them up or losing the wait. That is a retention mechanic
+// with a watering can on it, and this game does not have those. Water is a
+// GATE — tap it once and the thing you planted will be there when you get back,
+// however long you are gone.
+//
+// What a sprinkler buys, then, is not "your big crops can finish" but "you
+// never tap again" — which on a mountain of twenty-four plots is plenty.
+//
+// Watering early never shortens an existing window; it can only extend it.
 export function water(farm, ti, pi, wallNow) {
   const plot = plotAt(farm, ti, pi);
   if (!plot || !plot.kind) return false;
@@ -184,7 +222,8 @@ export function water(farm, ti, pi, wallNow) {
   if (alwaysWatered(farm, terrace)) return false;   // the sprinkler has it
   if (isRipe(plot)) return false;                   // nothing left to grow
   evaluatePlot(plot, wallNow, false);
-  plot.wateredUntilMs = wallNow + TUNING.waterMs;
+  const remaining = stageMsOf(plot) - plot.progressMs;
+  plot.wateredUntilMs = Math.max(plot.wateredUntilMs, wallNow + Math.max(TUNING.waterMs, remaining));
   return true;
 }
 
@@ -284,9 +323,31 @@ export function ripeCount(farm) {
   return eachPlot(farm).filter(({ plot }) => isRipe(plot)).length;
 }
 
-// When the next thing ripens, in ms from now — null if nothing is on its way.
-// The returning-session promise ("always open to something ready") is checked
-// against this.
+// WHICH plot is next to ripen, and when — { ti, pi, ms } — or null if nothing on
+// the mountain is on its way anywhere.
+//
+// Plots that are ALREADY ripe are not "next": what has arrived is not what is
+// coming, and the glint on a ripe plot is the loudest thing on the screen
+// without any help. A caller that wants "is anything ready right now" is asking
+// `ripeCount`, and one that wants "how long until something is" is asking
+// `msUntilNextRipe` below — this one is for pointing at the plot to watch.
+//
+// Ties go to the first plot in eachPlot order, so the answer is stable frame to
+// frame and a countdown drawn from it does not hop between two plots that
+// happen to finish together.
+export function soonestRipening(farm, wallNow) {
+  let soonest = null;
+  for (const { ti, pi, plot, watered } of eachPlot(farm)) {
+    const ms = msUntilRipe(plot, wallNow, watered);
+    if (ms == null || ms <= 0) continue;
+    if (soonest == null || ms < soonest.ms) soonest = { ti, pi, ms };
+  }
+  return soonest;
+}
+
+// When the next thing ripens, in ms from now — 0 if something already has, null
+// if nothing is on its way. The returning-session promise ("always open to
+// something ready") is checked against this.
 export function msUntilNextRipe(farm, wallNow) {
   let soonest = null;
   for (const { plot, watered } of eachPlot(farm)) {

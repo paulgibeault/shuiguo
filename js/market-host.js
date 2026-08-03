@@ -24,7 +24,7 @@ import {
   drawFromCrate, crateSize, levelsIn, countOf, makeRunTally, noteMerges, rollSeedDrip,
   finishFirstRun, earn, canGoToMarket,
 } from './campaign.js';
-import { appraise } from './economy.js';
+import { appraise, tidyBonusPercent } from './economy.js';
 import { paintChip } from './chips.js';
 import { sfx } from './sfx.js';
 
@@ -148,6 +148,22 @@ export function makeMarketHost({ canvas, router, save, getSettings, rng, loop, s
       paintChip($('m-next'), g.next, 0.34);
     }
     buildCrateStrip();
+    refreshPackUp();
+  }
+
+  // "Pack up 收摊" is the smart play and reads as the cowardly one, so once
+  // there is a bonus to be had the button says what it pays. Asked of the same
+  // appraisal that will pay it, rather than of a rule written twice — a run
+  // worth nothing yet advertises nothing.
+  function refreshPackUp() {
+    const earned = appraise({
+      score: g.score,
+      boardLevels: g.bodies.map((b) => b.level),
+      reason: 'packed',
+    }).tidyBonus;
+    $('pack-up').textContent = earned > 0
+      ? `Pack up 收摊 +${tidyBonusPercent()}%`
+      : 'Pack up 收摊';
   }
 
   function clearCanvas(el) {

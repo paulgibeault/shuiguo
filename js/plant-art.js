@@ -17,7 +17,7 @@
 // here that takes the clock — and it goes still under reduced motion.
 
 import { MAX_LEVEL, farmOf, radiusOf } from './constants.js';
-import { paintFruit } from './fruit-art.js';
+import { paintFruit, expressionFor } from './fruit-art.js';
 
 // The whole palette the plant painter gets, beyond each fruit's own five
 // colours. Greens are deliberately duller than any FRUITS.leaf so that fruit
@@ -37,7 +37,15 @@ export const FARM_PALETTE = {
   mound: '#7a5c3c',
   moundDark: '#5b4329',
   moundWet: '#4a3423',
+  moundLip: '#9a7551',    // the raised rim that says "this is ground, not floor"
   glint: '#fff3c4',
+  // Time, made visible. The ring is deliberately quiet next to the glint: one
+  // says "coming", the other says "now", and the farm has to keep those apart.
+  progressTrack: '#3f3222',
+  progressDone: '#ffd97a',
+  chip: '#2f2619',
+  chipInk: '#f4e6c8',
+  hint: '#cbb894',        // the 种 over ground you could plant in
 };
 
 export const PLANT = {
@@ -46,6 +54,13 @@ export const PLANT = {
   seedUntil: 0.18,        // progress below this is still bare turned earth …
   sproutUntil: 0.45,      // … then a sprout, then the grown plant
   saplingUntil: 0.55,     // perennials: a whip, then a young tree
+  // The whole ambient-motion budget of a plot, and it is small on purpose: a
+  // mountainside where everything moves is a mountainside where nothing reads.
+  swayMs: 5200,           // one lean-and-back, per-plot phase offset
+  sway: 0.022,            // radians — a breeze in the leaves, not a storm
+  bobMs: 1800,            // ripe only, on the glint's own clock
+  bob: 0.02,              // as a fraction of the height budget
+  ringR: 0.46,            // progress ring radius, as a fraction of the budget
 };
 
 // The one growth stage a plot is showing, out of what js/farm.js knows about
@@ -80,6 +95,11 @@ export const STAGES = ['empty', 'seed', 'sprout', 'grown', 'ripe', 'sapling', 'y
 // The turned earth every plant stands in. Watered soil is darker — the only
 // feedback watering leaves behind once the pour animation is over, and the
 // reason a dry farm reads as dry at a glance.
+//
+// `bare` earth additionally gets a lit rim along its top edge. A flat rectangle
+// of soil with a plant standing on it reads as ground; the same rectangle with
+// nothing on it reads as a floorboard, and the rim is what tells the player the
+// empty ones are the ones they can do something with.
 export function paintSoil(ctx, w, h, opts) {
   const wet = !!(opts && opts.wet);
   const r = Math.min(h * 0.3, w * 0.12);
@@ -98,6 +118,86 @@ export function paintSoil(ctx, w, h, opts) {
     ctx.lineTo(w / 2 - r, -h + h * t);
     ctx.stroke();
   }
+  if (!(opts && opts.bare)) return;
+  ctx.strokeStyle = FARM_PALETTE.moundLip;
+  ctx.lineWidth = Math.max(0.7, h * 0.09);
+  ctx.beginPath();
+  ctx.moveTo(-w / 2 + r, -h + ctx.lineWidth * 0.5);
+  ctx.lineTo(w / 2 - r, -h + ctx.lineWidth * 0.5);
+  ctx.stroke();
+}
+
+// 种 — plant. The one hint mark on the mountainside, and it appears only over
+// ground the player can act on RIGHT NOW: bare earth with something in the
+// drawer that would go in it. An affordance shown to somebody with nothing to
+// plant is not a hint, it is a tease. The painter stays dumb — whether this
+// plot qualifies is the host's arithmetic, and arrives as a boolean.
+export function paintPlantHint(ctx, h, tMs, motion) {
+  const breathe = motion ? 0.72 + 0.28 * Math.abs(Math.sin((tMs || 0) / PLANT.swayMs * Math.PI)) : 1;
+  ctx.save();
+  ctx.globalAlpha = 0.34 * breathe;
+  ctx.fillStyle = FARM_PALETTE.hint;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.font = `700 ${Math.round(h * 0.34)}px "Hiragino Sans", system-ui, sans-serif`;
+  ctx.fillText('种', 0, -h * 0.42);
+  ctx.restore();
+}
+
+// ── time, made visible ─────────────────────────────────────────────────────
+
+// A thin ring around the plant, swept clockwise from the top by however much of
+// the current stage is done. Drawn BEHIND the plant so a full bush hides most of
+// it — the ring is for glancing at, not for reading, and the number that can be
+// read lives on the countdown chip instead.
+export function paintProgressRing(ctx, h, progress) {
+  const p = clamp01(progress);
+  // Nothing banked yet, nothing to show. An empty ring around a fresh sprig
+  // reads as a bubble rather than as a gauge at zero, and the plot it would
+  // appear on is the one already wearing a thirst glint.
+  if (p <= 0) return;
+  const r = h * PLANT.ringR;
+  const cy = -h * 0.5;
+  const top = -Math.PI / 2;
+  ctx.save();
+  ctx.lineWidth = Math.max(1, h * 0.045);
+  ctx.lineCap = 'round';
+  ctx.globalAlpha = 0.3;
+  ctx.strokeStyle = FARM_PALETTE.progressTrack;
+  ctx.beginPath();
+  ctx.arc(0, cy, r, 0, Math.PI * 2);
+  ctx.stroke();
+  if (p > 0) {
+    ctx.globalAlpha = 0.85;
+    ctx.strokeStyle = FARM_PALETTE.progressDone;
+    ctx.beginPath();
+    ctx.arc(0, cy, r, top, top + p * Math.PI * 2);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+// The one countdown on the farm, over the one plot that is next. A second chip
+// would make the mountainside a dashboard, which is the opposite of what the
+// farm is for — the ring says "everything is on its way", this says "and the
+// first one lands in 2:31".
+export function paintCountdown(ctx, text, h) {
+  const size = Math.round(h * 0.3);
+  ctx.save();
+  ctx.font = `700 ${size}px system-ui, sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  const w = ctx.measureText(text).width + size * 0.9;
+  const boxH = size * 1.5;
+  const y = -h * 1.16;
+  ctx.globalAlpha = 0.82;
+  ctx.fillStyle = FARM_PALETTE.chip;
+  roundRect(ctx, -w / 2, y - boxH / 2, w, boxH, boxH / 2);
+  ctx.fill();
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = FARM_PALETTE.chipInk;
+  ctx.fillText(text, 0, y);
+  ctx.restore();
 }
 
 // ── the plants ─────────────────────────────────────────────────────────────
@@ -106,26 +206,46 @@ export function paintSoil(ctx, w, h, opts) {
  * Paint one plant, anchored at the origin and growing up into `h` units.
  *
  * desc: { kind, level, progress, mature, ripe, trellis }
- * opts: { tMs, motion, wet }
+ * opts: { tMs, motion, seed }
+ *
+ * `seed` is any integer that identifies this plot. It phases the sway and the
+ * blinks, so a terrace does not lean in unison or wink at the player in one
+ * block; it is passed in rather than derived here because WHICH plot this is
+ * belongs to the caller, and the same plot must get the same seed every frame.
+ *
+ * The sway and the ripe bob are the plot's whole motion budget, and both are
+ * DECORATION: under reduced motion they simply stop. The glint is not — it is
+ * the only way the farm says "this one is ready", so it is painted outside the
+ * moving transform and holds still and bright either way.
  */
 export function paintPlant(ctx, desc, h, opts) {
   const stage = stageOf(desc);
   if (stage === 'empty') return stage;
   const level = clampLevel(desc.level);
   const o = opts || {};
+  const tMs = o.tMs || 0;
+  const seed = Number.isInteger(o.seed) ? o.seed : 0;
 
   ctx.save();
-  if (desc.kind === 'vine') paintVine(ctx, level, stage, h);
-  else if (desc.kind === 'tree') paintTree(ctx, level, stage, h);
-  else paintBedPlant(ctx, level, stage, h);
+  if (o.motion) {
+    // lean about the plot's own ground point, and bob only when there is fruit
+    // hanging there to anticipate picking
+    ctx.rotate(Math.sin(tMs / PLANT.swayMs * Math.PI * 2 + seed * 1.7) * PLANT.sway);
+    if (stage === 'ripe') {
+      ctx.translate(0, Math.sin(tMs / PLANT.bobMs * Math.PI * 2 + seed) * h * PLANT.bob);
+    }
+  }
+  if (desc.kind === 'vine') paintVine(ctx, level, stage, h, tMs, o.motion, seed);
+  else if (desc.kind === 'tree') paintTree(ctx, level, stage, h, tMs, o.motion, seed);
+  else paintBedPlant(ctx, level, stage, h, tMs, o.motion, seed);
   ctx.restore();
 
-  if (stage === 'ripe') paintGlint(ctx, h, o.tMs || 0, o.motion);
+  if (stage === 'ripe') paintGlint(ctx, h, tMs, o.motion);
   return stage;
 }
 
 // Annuals: a mound, a sprout, then a low bush with its fruit sitting in it.
-function paintBedPlant(ctx, level, stage, h) {
+function paintBedPlant(ctx, level, stage, h, tMs, motion, seed) {
   if (stage === 'seed') {
     sprig(ctx, 0, h * 0.16, h * 0.1, FARM_PALETTE.sprout);
     return;
@@ -142,13 +262,13 @@ function paintBedPlant(ctx, level, stage, h) {
 
   // the crop itself, sitting in the leaves: the real fruit, small
   const fr = h * 0.2;
-  for (const [dx, dy] of [[-0.34, 0.42], [0.36, 0.5], [0, 0.72]]) {
-    fruitAt(ctx, level, dx * h * 0.5, -top * dy, fr);
-  }
+  [[-0.34, 0.42], [0.36, 0.5], [0, 0.72]].forEach(([dx, dy], i) => {
+    fruitAt(ctx, level, dx * h * 0.5, -top * dy, fr, tMs, motion, seed, i);
+  });
 }
 
 // Perennials: a whip, a young tree, then a full crown that fruits forever.
-function paintTree(ctx, level, stage, h) {
+function paintTree(ctx, level, stage, h, tMs, motion, seed) {
   const young = stage === 'sapling';
   const trunkH = young ? h * 0.34 : h * (stage === 'young' ? 0.44 : 0.5);
   const crownR = young ? h * 0.12 : h * (stage === 'young' ? 0.26 : 0.34);
@@ -166,6 +286,11 @@ function paintTree(ctx, level, stage, h) {
   ctx.strokeStyle = FARM_PALETTE.trunkDark;
   ctx.lineWidth = Math.max(0.6, h * 0.014);
   ctx.stroke();
+
+  // The knot in the bark, which is a face if you look at it — the same trick
+  // the fruit pull, at the one scale a trunk has room for. Only once the tree
+  // is past a whip: a sapling has no trunk to have a knot in.
+  if (stage !== 'sapling') paintKnot(ctx, trunkH, h, tMs, motion, seed);
 
   if (!young) {                                  // two boughs out of the trunk
     ctx.strokeStyle = FARM_PALETTE.bark;
@@ -189,14 +314,41 @@ function paintTree(ctx, level, stage, h) {
   if (stage !== 'ripe') return;
 
   const fr = Math.min(h * 0.17, crownR * 0.62);
-  for (const [dx, dy] of [[-0.62, 0.42], [0.6, 0.34], [-0.1, 0.66], [0.28, -0.3]]) {
-    fruitAt(ctx, level, dx * crownR, cy + dy * crownR, fr);
+  [[-0.62, 0.42], [0.6, 0.34], [-0.1, 0.66], [0.28, -0.3]].forEach(([dx, dy], i) => {
+    fruitAt(ctx, level, dx * crownR, cy + dy * crownR, fr, tMs, motion, seed, i);
+  });
+}
+
+// Two half-shut eyes in the bark. Drawn in the trunk's own dark, at the size a
+// knot would be, so a tree that is not being looked at is a tree with a knot in
+// it and a tree that is has been quietly watching the whole time.
+function paintKnot(ctx, trunkH, h, tMs, motion, seed) {
+  const r = h * 0.019;
+  const y = -trunkH * 0.62;
+  const shut = motion && isWinking(seed, tMs);
+  ctx.save();
+  ctx.globalAlpha = 0.55;
+  ctx.fillStyle = FARM_PALETTE.trunkDark;
+  ctx.strokeStyle = FARM_PALETTE.trunkDark;
+  ctx.lineWidth = Math.max(0.5, r * 0.8);
+  for (const dir of [-1, 1]) {
+    if (shut) {
+      ctx.beginPath();
+      ctx.moveTo(dir * h * 0.02 - r, y);
+      ctx.lineTo(dir * h * 0.02 + r, y);
+      ctx.stroke();
+    } else {
+      ctx.beginPath();
+      ctx.ellipse(dir * h * 0.02, y, r, r * 1.15, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
   }
+  ctx.restore();
 }
 
 // Vines climb the trellis the plot already carries — see paintTrellis, which
 // the caller draws first so the tendrils sit in front of the timber.
-function paintVine(ctx, level, stage, h) {
+function paintVine(ctx, level, stage, h, tMs, motion, seed) {
   if (stage === 'seed') { sprig(ctx, 0, h * 0.14, h * 0.09, FARM_PALETTE.sprout); return; }
   const reach = stage === 'sapling' ? h * 0.34 : h * (stage === 'young' ? 0.6 : 0.78);
 
@@ -214,9 +366,9 @@ function paintVine(ctx, level, stage, h) {
   if (stage !== 'ripe') return;
 
   const fr = h * 0.16;
-  for (const [dx, dy] of [[-0.2, 0.5], [0.22, 0.68], [0, 0.86]]) {
-    fruitAt(ctx, level, dx * h, -reach * dy, fr);
-  }
+  [[-0.2, 0.5], [0.22, 0.68], [0, 0.86]].forEach(([dx, dy], i) => {
+    fruitAt(ctx, level, dx * h, -reach * dy, fr, tMs, motion, seed, i);
+  });
 }
 
 // The trellis itself is plot furniture, not a plant: it is built once and stays
@@ -269,14 +421,28 @@ export function paintGlint(ctx, h, tMs, motion) {
 
 // The real fruit, at plant scale. paintFruit draws at its own world radius, so
 // this scales the whole context down to the size the plant can carry.
-function fruitAt(ctx, level, x, y, r) {
+//
+// It blinks, too, off the same machinery the board's fruit blink off — the
+// charm that makes the stall work costs one argument here, and a bush of
+// strawberries that blinks is the difference between a crop and a cast. The
+// synthetic id has to be stable per fruit per plot, or the whole hillside
+// blinks in lockstep on one frame and never again.
+function fruitAt(ctx, level, x, y, r, tMs, motion, seed, index) {
   const worldR = radiusOf(level);
+  const expression = expressionFor({ id: (seed || 0) * 13 + (index || 0) }, tMs || 0, !motion);
   ctx.save();
   ctx.translate(x, y);
   const k = r / worldR;
   ctx.scale(k, k);
-  paintFruit(ctx, level, worldR);
+  paintFruit(ctx, level, worldR, { expression });
   ctx.restore();
+}
+
+// The tree's own blink, on a longer, lazier period than the fruit's — a tree is
+// an old thing and should look like it is dozing rather than paying attention.
+function isWinking(seed, tMs) {
+  const period = PLANT.swayMs * 2 + (seed % 7) * 700;
+  return ((tMs || 0) + (seed % 5) * 900) % period < 260;
 }
 
 function stalk(ctx, x, h, w, color) {

@@ -8,10 +8,10 @@ import {
   makeFarm, makeStarterFarm, evaluateFarm, evaluatePlot, plotAt, eachPlot,
   canPlant, plant, water, needsWater, harvest, fertilize, buildTrellis,
   addTerrace, nextTerraceIndex, installSprinkler, installIrrigation,
-  isRipe, stageMsOf, progressOf, msUntilRipe, msUntilNextRipe, ripeCount,
+  isRipe, stageMsOf, progressOf, msUntilRipe, msUntilRipeAt, msUntilNextRipe, soonestRipening, ripeCount,
   serialize, restore,
 } from '../js/farm.js';
-import { TUNING, MAX_TERRACES, MAX_LEVEL, growthOf, cycleOf, yieldOf } from '../js/constants.js';
+import { TUNING, MAX_TERRACES, MAX_LEVEL, farmOf, growthOf, cycleOf, yieldOf } from '../js/constants.js';
 
 const T0 = 1_700_000_000_000;      // a plausible wall-clock epoch
 const MIN = 60_000;
@@ -21,11 +21,14 @@ const DAY = 24 * HOUR;
 const CHERRY = 1, STRAWBERRY = 2, GRAPE = 3, PINEAPPLE = 9;
 const TREE_PLOT = 0, BED_PLOT = 1;
 
-// A farm with `level` planted in the right kind of plot, watered, at T0.
+// A farm with `level` planted in the ground it belongs in, watered, at T0.
+// The table decides which plot that is — a test that hard-coded the mapping
+// would quietly stop testing the level whose kind changed.
 function planted(level, plotIndex) {
   const farm = makeFarm();
-  const pi = plotIndex != null ? plotIndex : (level === STRAWBERRY ? BED_PLOT : TREE_PLOT);
-  if (level === GRAPE) buildTrellis(farm, 0, pi);
+  const kind = farmOf(level).kind;
+  const pi = plotIndex != null ? plotIndex : (kind === 'bed' ? BED_PLOT : TREE_PLOT);
+  if (kind === 'vine') buildTrellis(farm, 0, pi);
   assert.ok(plant(farm, 0, pi, level, T0), `could not plant level ${level}`);
   assert.ok(water(farm, 0, pi, T0));
   return { farm, pi };
@@ -55,6 +58,45 @@ test('the starter farm arrives with a cherry tree in the bench, and thirsty', ()
   assert.ok(!isRipe(plot));
 });
 
+// The other half of the handover, and the answer to "now what?": a bed already
+// halfway up and already watered, so the farm keeps its own promise inside a
+// minute rather than asking for three of them first.
+test('the starter farm also arrives with a bed half grown and watered', () => {
+  const farm = makeStarterFarm(T0);
+  const plot = plotAt(farm, 0, BED_PLOT);
+  assert.equal(plot.level, TUNING.starterCrop);
+  assert.equal(plot.kind, farmOf(TUNING.starterCrop).kind);
+  assert.equal(progressOf(plot), TUNING.starterCropProgress);
+  assert.ok(!needsWater(farm, 0, BED_PLOT, T0), 'the bed was handed over dry');
+  assert.ok(!isRipe(plot), 'the farm came with the crop already picked');
+});
+
+test('the new farm pays off before the player can get bored of it', () => {
+  const farm = makeStarterFarm(T0);
+  const soon = msUntilNextRipe(farm, T0);
+  assert.ok(soon != null && soon <= 90 * 1000,
+    `nothing on the new farm ripens for ${Math.round(soon / 1000)}s`);
+
+  // and it happens on its own: the one tap the opening asks for is the tree
+  evaluateFarm(farm, T0 + soon);
+  assert.ok(isRipe(plotAt(farm, 0, BED_PLOT)), 'the bed missed its own ripening date');
+  assert.ok(!isRipe(plotAt(farm, 0, TREE_PLOT)), 'the thirsty tree grew without being watered');
+
+  // water the tree at the same moment and it follows a couple of minutes later,
+  // so the opening is two payoffs rather than one wait
+  water(farm, 0, TREE_PLOT, T0 + soon);
+  evaluateFarm(farm, T0 + soon + growthOf(TUNING.starterTree));
+  assert.ok(isRipe(plotAt(farm, 0, TREE_PLOT)));
+});
+
+test('the starter farm survives the save it is written into', () => {
+  const back = restore(serialize(makeStarterFarm(T0)));
+  const bed = plotAt(back, 0, BED_PLOT);
+  assert.equal(bed.level, TUNING.starterCrop);
+  assert.equal(progressOf(bed), TUNING.starterCropProgress);
+  assert.equal(msUntilNextRipe(back, T0), msUntilNextRipe(makeStarterFarm(T0), T0));
+});
+
 // ── growth is gated by water, and by nothing else ──────────────────────────
 
 test('growth accrues only inside the watered window', () => {
@@ -72,21 +114,35 @@ test('growth accrues only inside the watered window', () => {
 });
 
 test('dry soil pauses growth — and nothing wilts while it waits', () => {
-  const { farm, pi } = planted(PINEAPPLE, BED_PLOT);
-  const plot = plotAt(farm, 0, pi);
+  const farm = makeFarm();
+  plant(farm, 0, BED_PLOT, PINEAPPLE, T0);        // planted and never watered
+  const plot = plotAt(farm, 0, BED_PLOT);
 
-  // one watering covers waterMs; the pineapple needs far longer than that
-  evaluateFarm(farm, T0 + TUNING.waterMs + 10 * DAY);
-  assert.equal(plot.progressMs, TUNING.waterMs, 'growth ran on dry soil');
+  evaluateFarm(farm, T0 + 10 * DAY);
+  assert.equal(plot.progressMs, 0, 'growth ran on dry soil');
   assert.ok(!isRipe(plot));
   assert.equal(plot.level, PINEAPPLE, 'the crop died of neglect');
   assert.equal(plot.kind, 'bed');
 
-  // water it again a fortnight later and it picks up exactly where it stopped
-  const t1 = T0 + TUNING.waterMs + 10 * DAY;
-  assert.ok(water(farm, 0, pi, t1));
+  // water it a fortnight later and it picks up exactly where it stopped
+  const t1 = T0 + 10 * DAY;
+  assert.ok(water(farm, 0, BED_PLOT, t1));
   evaluateFarm(farm, t1 + HOUR);
-  assert.equal(plot.progressMs, TUNING.waterMs + HOUR);
+  assert.equal(plot.progressMs, HOUR);
+});
+
+// The promise that makes the farm calm rather than demanding: whatever you
+// planted will be ready when you get back, however long you are gone. A fixed
+// watering window shorter than the crop would mean topping the big ones up
+// every few hours or losing the wait — a retention mechanic with a watering can
+// on it, and this game does not have those.
+test('one watering always sees the current stage through, however long it is', () => {
+  for (let level = 1; level <= MAX_LEVEL; level++) {
+    const { farm, pi } = planted(level);
+    evaluateFarm(farm, T0 + 30 * DAY);
+    assert.ok(isRipe(plotAt(farm, 0, pi)),
+      `a watered level ${level} was still not ready after a month away`);
+  }
 });
 
 test('a week away leaves everything ripe and nothing hoarded', () => {
@@ -145,13 +201,19 @@ test('equipment does not retroactively water the dry stretch before it', () => {
   assert.equal(plotAt(farm2, 0, BED_PLOT).progressMs, 0, 'irrigation grew the past');
 });
 
-test('watering moves the window rather than stacking it', () => {
+test('watering again can only extend the window, never cut it short', () => {
   const { farm, pi } = planted(PINEAPPLE, BED_PLOT);
   const plot = plotAt(farm, 0, pi);
+  const covered = plot.wateredUntilMs;
+  assert.ok(covered >= T0 + growthOf(PINEAPPLE), 'one can did not cover the crop');
+
   water(farm, 0, pi, T0 + MIN);
-  assert.equal(plot.wateredUntilMs, T0 + MIN + TUNING.waterMs);
-  evaluateFarm(farm, T0 + 3 * TUNING.waterMs);
-  assert.equal(plot.progressMs, MIN + TUNING.waterMs, 'a second can watered twice as long');
+  assert.ok(plot.wateredUntilMs >= covered, 'a second can shortened the first');
+  // and the crop still finishes exactly when its own clock says, not sooner
+  evaluateFarm(farm, T0 + growthOf(PINEAPPLE) - MIN);
+  assert.ok(!isRipe(plot), 'watering twice grew it faster');
+  evaluateFarm(farm, T0 + growthOf(PINEAPPLE));
+  assert.ok(isRipe(plot));
 });
 
 // ── perennials ─────────────────────────────────────────────────────────────
@@ -160,7 +222,6 @@ test('a tree matures once, then fruits on the shorter cycle forever', () => {
   const { farm, pi } = planted(CHERRY);
   const plot = plotAt(farm, 0, pi);
   assert.equal(stageMsOf(plot), growthOf(CHERRY));
-  assert.ok(cycleOf(CHERRY) <= growthOf(CHERRY), 'the cycle should not be slower than the maturing');
 
   let t = T0 + growthOf(CHERRY);
   evaluateFarm(farm, t);
@@ -298,13 +359,44 @@ test('the soonest ripening is what a returning session opens to', () => {
   assert.equal(msUntilNextRipe(farm, T0 + DAY), 0);
 });
 
-test('a dry plot is not on its way to anything', () => {
+// What the countdown chip points at. It is a different question from "is
+// anything ready" — a ripe plot has arrived, and the farm has a glint for that.
+test('the soonest RIPENING plot is the one still on its way', () => {
+  const farm = makeFarm();
+  plant(farm, 0, TREE_PLOT, CHERRY, T0);
+  water(farm, 0, TREE_PLOT, T0);
+  plant(farm, 0, BED_PLOT, STRAWBERRY, T0);
+  water(farm, 0, BED_PLOT, T0);
+
+  const soon = soonestRipening(farm, T0);
+  assert.equal(soon.ti, 0);
+  assert.equal(soon.pi, BED_PLOT, 'the slower crop was named as the next one');
+  assert.equal(soon.ms, growthOf(STRAWBERRY));
+  assert.equal(msUntilNextRipe(farm, T0), soon.ms, 'the two clocks disagree while nothing is ripe');
+
+  // once the strawberry lands it stops being "next" — it has arrived, and the
+  // chip moves on to the thing that has not
+  const t1 = T0 + growthOf(STRAWBERRY);
+  evaluateFarm(farm, t1);
+  assert.ok(isRipe(plotAt(farm, 0, BED_PLOT)));
+  assert.equal(msUntilNextRipe(farm, t1), 0, 'something IS ready and the farm denied it');
+  assert.equal(soonestRipening(farm, t1).pi, TREE_PLOT, 'the chip stayed parked on the picked crop');
+
+  // and with everything ripe there is nothing coming at all
+  evaluateFarm(farm, T0 + DAY);
+  assert.equal(soonestRipening(farm, T0 + DAY), null);
+  assert.equal(msUntilNextRipe(farm, T0 + DAY), 0);
+});
+
+test('a plot nobody watered is not on its way to anything', () => {
   const farm = makeFarm();
   plant(farm, 0, BED_PLOT, PINEAPPLE, T0);
-  water(farm, 0, BED_PLOT, T0);
-  // one can of water cannot see a pineapple through, so it has no ripening date
+  // dry: no ripening date at all until someone waters it
   assert.equal(msUntilRipe(plotAt(farm, 0, BED_PLOT), T0, false), null);
   assert.equal(msUntilRipe(plotAt(farm, 0, BED_PLOT), T0, true), growthOf(PINEAPPLE));
+  // watered: it has a date, and it is the crop's own
+  water(farm, 0, BED_PLOT, T0);
+  assert.equal(msUntilRipe(plotAt(farm, 0, BED_PLOT), T0, false), growthOf(PINEAPPLE));
 });
 
 // ── clocks behaving badly ──────────────────────────────────────────────────
