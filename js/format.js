@@ -33,6 +33,23 @@ export function countdown(ms) {
 function pad(n) { return n < 10 ? `0${n}` : String(n); }
 
 /**
+ * A wait as a SPAN rather than as a countdown: `90s`, `6 min`, `1.5 h`, `24 h`.
+ *
+ * The collection book's numbers are facts about a fruit, not clocks running
+ * down — "a pineapple takes 24 h" is the joke, and `24:00` reads as a countdown
+ * somebody has to sit through. One decimal at most, and never a trailing zero,
+ * so the row stays a fact you can glance at.
+ */
+export function span(ms) {
+  if (typeof ms !== 'number' || !isFinite(ms) || ms <= 0) return '—';
+  if (ms < MINUTE) return `${trim(ms / SECOND)}s`;
+  if (ms < HOUR) return `${trim(ms / MINUTE)} min`;
+  return `${trim(ms / HOUR)} h`;
+}
+
+function trim(n) { return String(Math.round(n * 10) / 10); }
+
+/**
  * 元, grouped in thousands. Whole numbers only — the campaign has no fractions
  * of a 元 and never has, so a decimal point here would be a bug's first symptom.
  *

@@ -26,6 +26,54 @@ state has to be migrated across that rename rather than silently orphaned.
 - Every fruit has its own `bounce` (restitution): a cherry pings, a watermelon
   thuds. Walls and floor use the fruit's own value, fruit-to-fruit uses the
   pair average.
+- The preview is seven deep (`QUEUE_DEPTH`), biggest at the head and fading into
+  the future. One fruit of warning was fine for an endless sky; a crate is
+  something you plan against. It runs along the **rail** — the strip under the
+  score, which is its alone, and which is what sets that seven: the ceiling is
+  how many icons a phone's width holds without shrinking them to confetti.
+- What is *left* in the crate is not up there. It stands on the **counter**, the
+  bar across the foot of the board, with Pack up at the right-hand end and the
+  friend on their stool at the left. The two fruit strips used to be unlabelled
+  rows of identical small icons stacked one above the other; they are different
+  kinds of fact, read at different moments (every drop / between drops), so they
+  are now at opposite ends of the stall under their own names.
+
+## Whose fruit you are selling
+
+Every board is somebody's stall, and what stocks it is the only mechanical
+difference between them.
+
+- A **friend** hands you a **morning's produce** — a finite crate, packed from
+  their own weighting of the sky, so 葡萄's cozy crate of small fruit is a long
+  patient day and 苹果's is a short loud one. You see what is in it before you
+  commit: knocking on a stall opens a launch window showing today's crate, and
+  it is picked fresh every time you knock. Their stall opens when you merge
+  their fruit at the market, and nowhere else.
+- A friend has **one farm**, so selling everything on it costs them the time it
+  takes to pick another: their stall shows **Back in 6:42** on the map and opens
+  again when it is up (`restockMs`, per friend — 草莓's bed comes back inside a
+  session, 苹果's trees take their time). Nothing expires while you are away and
+  nothing is lost by not coming back; a restocked friend simply waits.
+- The **wholesaler** 批发商 sells by the lorry-load: an **endless crate**, evenly
+  stocked, open from the first launch, and **never** restocking — nobody's field
+  is behind it. That is what keeps the friends' clocks a limit rather than a
+  wait: there is always a board to play. This is free play, exactly as it always
+  was, behind a door of its own.
+- Either way you can **pack up 收摊** whenever you like, and selling a crate to
+  the last cherry closes the day by itself. Both endings earn the Tidy Stall
+  bonus on the split — the campaign's own rule, and packing up should feel like
+  the smart play rather than the cowardly one.
+- Everyone takes the same share of the till (`TUNING.friendCut`), paid into the
+  campaign as cash and nothing else. An endless crate is stock somebody fronted
+  you, not a gift.
+
+The **leaderboard** asks two things of a run: an evenly stocked sky, and no cap
+on it. Only the wholesaler's board answers both — a capped run and an uncapped
+one are not the same game — so that is the one that posts a high score, a best
+chain and a fastest watermelon. Both gates are derived (from the weights, and
+from the crate size) rather than set by a flag, so a stall added to the table
+later cannot be let onto the board by a field nobody remembered to set. The
+collection book is not gated: a first pear is a first pear wherever you made it.
 
 ## Feel
 
@@ -55,9 +103,17 @@ above the deadline: "the pile reached the line" and "the stall is full to the
 canopy" are the same picture. Dark theme is the same stall in the evening,
 lit by two paper lanterns. A leaf drifts through every half minute or so.
 
+A portrait viewport is taller than the 360×560 world, and the slack that leaves
+is stall rather than sky: the canopy runs up to the top edge of the canvas, and
+the boarded apron under the counter — where a friend minding the stall sits —
+takes the rest (`js/render.js` §`TOP_SHARE`). The column itself widens with the
+viewport's height between a phone's width and 34rem, because the fit is always
+width-bound in portrait: a tall window used to spend its height on letterbox and
+leave the game a ribbon down the middle of a big screen.
+
 It is all procedural canvas drawing — no sprites, no image files — from one
-painter (`js/fruit-art.js`) shared by the board, the NEXT preview and the menu
-chart, over one scene (`js/scene.js`). Both are pure modules that touch nothing
+painter (`js/fruit-art.js`) shared by the board, the rail's chips and
+the collection book, over one scene (`js/scene.js`). Both are pure modules that touch nothing
 but the 2D context they are handed, so they test under `node --test` against a
 stub. Fruit colours and face parameters live in the `FRUITS` / `FACES` tables
 in `js/constants.js`; the painters hold no palette of their own.
@@ -69,10 +125,14 @@ pops: 桃 · táo · Peach · +128, big hanzi over readable pinyin. That is the
 bilingual-learning moment, so the tone marks get real type size. The card does
 **not** pause anything: the pile keeps falling behind it, aiming keeps working,
 and it leaves after 2.5 s or on a tap. Several discoveries in one cascade queue
-up rather than stacking. Discovery is persisted the instant it happens, and the
-menu's evolution chart doubles as the collection book — everything you have
-never made is a dimmed silhouette under a `?`, which is the reason to go get
-the pear.
+up rather than stacking. Discovery is persisted the instant it happens, and it
+fills in the **collection book** 图鉴 — a scrolling shelf of tiles, one per
+fruit, where everything you have never made is a dimmed silhouette under a `?`.
+That is the reason to go and get the pear, and a tile you *have* earned opens: a
+page with the fruit at portrait size, where it sits in the chain, and every
+number the tables know about it — what it scores, what a merchant pays for it,
+how it is grown, how long it takes, what it yields and what a seed costs. A
+silhouette does not open; the mystery is the point.
 
 A chain of three or more flashes a banner (`3-chain! 三连!`) under the header,
 and game over opens the run: the biggest fruit you grew, drawn by the real

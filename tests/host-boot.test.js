@@ -13,10 +13,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { bootGame } from './fake-dom.js';
-import { TUNING, RULES, FRIENDS, scoreOf } from '../js/constants.js';
+import { TUNING, RULES, FRIENDS, WHOLESALER, MAX_LEVEL, scoreOf } from '../js/constants.js';
 import { evaluateFarm, eachPlot, isRipe, harvest } from '../js/farm.js';
 import { mergeValue, chainMultiplier, friendCut } from '../js/economy.js';
 import { multiplier } from '../js/format.js';
+import { QUEUE_DEPTH } from '../js/game.js';
 import { FREE_PLAY_KEYS, CAMPAIGN_KEYS, CAMPAIGN_KEY, MARKET_KEY } from '../js/campaign-save.js';
 import { makeCampaign, finishFirstRun, buyFarm, harvestInto, noteMerges, makeRunTally, serialize as packCampaign } from '../js/campaign.js';
 
@@ -32,7 +33,7 @@ function dropAt(booted, x) {
 
 // Which sheet is up, by the ids the router owns.
 function screen($) {
-  for (const id of ['mode', 'menu', 'over', 'appraisal']) if (!$(id).hidden) return id;
+  for (const id of ['mode', 'menu', 'stall', 'over', 'appraisal']) if (!$(id).hidden) return id;
   if (!$('farm-hud').hidden) return 'farm';
   if (!$('market-hud').hidden) return 'market';
   if (!$('hud').hidden) return 'game';
@@ -55,8 +56,10 @@ test('a fresh player lands on the map, with every place in the valley visible', 
   assert.equal($('map-shop').disabled, true, 'the shop sold to a player with nowhere to plant');
   assert.match($('farm-note').textContent, /For sale/, 'the farm does not say it is for sale');
   assert.equal($('map-hint').hidden, false, 'the opening line under the map is missing');
-  assert.equal($('play-free').hidden, false, 'the first friend\'s door is missing');
-  assert.equal($('friends').hidden, true, 'a chooser of one went up');
+  // …and a stall to mind from the very first launch: the wholesaler's endless
+  // crate, open to everybody, with the cast greyed out behind it.
+  assert.ok($('friends').children.length > 1, 'the map offers nowhere to mind a stall');
+  assert.ok($('friends').textContent.includes('Wholesaler'), 'the wholesaler is not on the map');
 });
 
 test('every id the hosts reach for is one index.html actually declares', async () => {
@@ -306,6 +309,153 @@ function finishStall($, arcade) {
   assert.equal($('over').hidden, false, 'the pile never reached the line');
 }
 
+// ── the queue on the rail ──────────────────────────────────────────────────
+// One fruit of warning is not enough to plan a crate against, so the preview is
+// QUEUE_DEPTH deep and runs along the rail under the score. Both boards draw the
+// same strip; only what stocks it differs.
+
+test('both boards show the whole preview, painted, on the rail', async () => {
+  const free = await openedStall();
+  const chips = [...free.$('queue-chips').children];
+  assert.equal(chips.length, QUEUE_DEPTH, `the free-play queue showed ${chips.length} fruit`);
+  for (const art of chips) assert.ok(art.width > 0, 'a queue chip was never painted');
+  assert.ok(chips[0].className.includes('head'), 'the fruit up next is not marked out');
+  assert.match(free.$('next-label').textContent, /\S/, 'the queue names nothing');
+
+  const market = await resumedMarket();
+  assert.equal([...market.$('m-queue-chips').children].length, QUEUE_DEPTH,
+    'the market day lost its preview');
+  assert.match(market.$('m-next-label').textContent, /\S/);
+});
+
+test('the preview empties with the crate, and says so when the day is done', async () => {
+  const { $, arcade } = await bootGame({
+    settings: { reducedMotion: true },
+    state: {
+      [CAMPAIGN_KEY]: farmedCampaign(),
+      save: { v: 1, score: 8, current: 1, next: null, queue: [], crate: {}, friend: FRIENDS[0].level, fruits: [], rngState: 3 },
+    },
+  });
+  assert.equal($('queue-chips').children.length, 0, 'an empty crate previewed fruit it does not have');
+  assert.match($('next-label').textContent, /Sold out/, 'the empty preview says nothing at all');
+  arcade.tick(1);
+});
+
+// ── the crate, and the two ways to put it down ─────────────────────────────
+//
+// A friend's stall is a morning's produce now: it has a clock on the HUD, it
+// can be packed up early for the Tidy Stall, and selling it to the last cherry
+// closes the day by itself. None of that touches the wholesaler's endless one,
+// which is the board this game has always had.
+
+// Open a friend's stall for real — through the launch window, the way a player
+// does — and hand back the booted game mid-run.
+async function openedStall(who = FRIENDS[0], campaign = farmedCampaign({ met: [who] })) {
+  const booted = await bootGame({ settings: { reducedMotion: true }, state: { [CAMPAIGN_KEY]: campaign } });
+  const card = [...booted.$('friends').children].find((c) => c.dataset.level === String(who.level));
+  card.fire('click');
+  booted.$('stall-open').fire('click');
+  assert.equal(screen(booted.$), 'game', 'the stall never opened');
+  return booted;
+}
+
+test('a friend\'s crate is the run\'s clock, and it is on the HUD', async () => {
+  const { $, arcade } = await openedStall();
+  const chips = [...$('stall-strip').children];
+  assert.ok(chips.length > 0, 'the crate never reached the HUD');
+  const before = chips.map((c) => c.textContent).join('');
+  assert.match(before, /×\d/, 'the crate strip shows no counts');
+
+  // …and it goes down as the fruit goes out
+  arcade.tick(2);
+  dropAt({ $, arcade }, 120);
+  const after = [...$('stall-strip').children].map((c) => c.textContent).join('');
+  assert.notEqual(after, before, 'the crate did not empty as the stall sold');
+});
+
+// Mid-morning at a friend's stall: fruit still in the crate, a day's takings
+// already on the board, and an empty counter so nothing ends the run but the
+// player.
+const HALF_SOLD = {
+  v: 1, score: 430, current: 1, next: 1, queue: [1, 2], crate: { 1: 5, 3: 2 },
+  friend: FRIENDS[0].level, fruits: [], rngState: 5,
+};
+
+test('packing up a friend\'s stall ends the day and pays the tidy bonus', async () => {
+  const { $, arcade } = await bootGame({
+    settings: { reducedMotion: true },
+    state: { [CAMPAIGN_KEY]: farmedCampaign(), save: HALF_SOLD },
+  });
+  assert.equal(screen($), 'game');
+  assert.match($('stall-pack-up').textContent, /\+\d+%/,
+    'the button never says what packing up pays');
+
+  $('stall-pack-up').fire('click');
+  arcade.tick(2);
+
+  assert.equal(screen($), 'over', 'packing up did not close the stall');
+  assert.match($('over-title').textContent, /Packed up/, 'the sheet still says the stall filled up');
+  // …and the split is the tidy one, which is strictly more than toppling out of
+  // the same run would have paid
+  assert.equal($('friend-cut').textContent, `Strawberry splits the till +${friendCut(430, 'packed')}元`);
+  assert.ok(friendCut(430, 'packed') > friendCut(430, 'toppled'), 'packing up paid no better than toppling');
+});
+
+// The market's own rule, held here: a run with nothing to split yet advertises
+// nothing, because "+10% of zero" is not an offer.
+test('a stall with nothing earned yet promises nothing on the button', async () => {
+  const { $ } = await openedStall();
+  assert.equal($('stall-pack-up').textContent, 'Pack up 收摊');
+});
+
+test('selling the last fruit closes the stall by itself', async () => {
+  // one cherry in the crate and nothing behind it: the shortest possible day
+  const { $, arcade } = await bootGame({
+    settings: { reducedMotion: true },
+    state: {
+      [CAMPAIGN_KEY]: farmedCampaign(),
+      save: { v: 1, score: 0, current: 1, next: null, queue: [], crate: {}, friend: FRIENDS[0].level, fruits: [], rngState: 3 },
+    },
+  });
+  assert.equal(screen($), 'game', 'a mid-run friend save no longer resumes');
+  assert.equal($('stall-strip').textContent, '', 'an empty crate still had something in it');
+
+  dropAt({ $, arcade }, 120);
+  arcade.tick(120);              // the last fruit lands and the pile settles
+  assert.equal(screen($), 'over', 'the stall stayed open with nothing left to sell');
+  assert.match($('over-title').textContent, /Sold out/, 'selling out was reported as toppling');
+});
+
+test('the endless stall never sells out, and never posts a crate', async () => {
+  const { $, arcade } = await openedStall(WHOLESALER, farmedCampaign());
+  assert.equal($('stall-strip').textContent, '∞', 'the endless crate grew a count');
+  arcade.tick(2);
+  dropAt({ $, arcade }, 120);
+  assert.equal($('stall-strip').textContent, '∞', 'the endless crate went down');
+  assert.equal(screen($), 'game', 'the endless stall closed');
+});
+
+// The leaderboard asks two things of a run: an even sky, and no cap on it.
+// Only the wholesaler's board answers both.
+test('only the endless, evenly-stocked board competes', async () => {
+  const endless = await openedStall(WHOLESALER, farmedCampaign());
+  endless.arcade.tick(1);
+  endless.$('stall-pack-up').fire('click');
+  endless.arcade.tick(2);
+  assert.equal(screen(endless.$), 'over');
+  assert.ok(endless.arcade.records.all['high-score'] !== undefined || Number(endless.$('final-score').textContent) === 0,
+    'an endless balanced run was kept off the board');
+
+  // 草莓's crate is evenly packed and still capped, so it does not compete
+  const crated = await openedStall();
+  crated.arcade.tick(1);
+  crated.$('stall-pack-up').fire('click');
+  crated.arcade.tick(2);
+  assert.ok(!crated.arcade.scores.lanes.some((s) => s.lane === 'classic'),
+    'a capped run posted to the arcade board');
+  assert.equal(crated.arcade.records.all['high-score'], undefined, 'a capped run claimed the high score');
+});
+
 test('minding the stall with a farm behind you pays the friend\'s split, and says so', async () => {
   const { $, arcade, before } = await mindedStall();
   finishStall($, arcade);
@@ -354,26 +504,37 @@ test('the split survives a reload, because it is flushed at the moment it is pai
 // is the campaign reaching into free play the same way the friend's split
 // reaches back. The chooser is where that shows up.
 
-test('with only 草莓 open there is no chooser — a menu of one is a speed bump', async () => {
-  const { $ } = await bootGame();
-  assert.equal($('friends').hidden, true, 'a chooser of one went up anyway');
-  assert.equal($('play-free').hidden, false, 'and it took the door with it');
-  assert.match($('play-free-name').textContent, /Strawberry/, 'the door does not say whose stall it is in English');
+// The one stall nobody has to earn, and the only endless one. It is free play,
+// kept intact behind a door of its own now that every friend hands over a
+// finite crate.
+test('the wholesaler is open on day one, and their crate never empties', async () => {
+  const { $, arcade } = await bootGame();
+  const card = [...$('friends').children].find((c) => c.textContent.includes('Wholesaler'));
+  assert.ok(card, 'the wholesaler has no door on the map');
+  assert.equal(card.tagName, 'BUTTON', 'the wholesaler has to be earned');
 
-  $('play-free').fire('click');
-  assert.equal(screen($), 'game', '草莓\'s stall did not open');
+  card.fire('click');
+  assert.equal(screen($), 'stall', 'the wholesaler opened without showing what is in the crate');
+  assert.ok($('stall-crate').textContent.includes('∞'), 'an endless crate was given a count');
+  assert.match($('stall-note').textContent, /split/, 'the endless crate is being given away free');
+
+  $('stall-open').fire('click');
+  assert.equal(screen($), 'game', 'the wholesaler\'s stall did not open');
+  arcade.tick(3);
+  arcade.runTimers();
+  arcade.fire('suspend');
+  const save = arcade.state.get('save');
+  assert.equal(save.crate, undefined, 'an endless run saved a crate that does not exist');
+  assert.equal($('stall-strip').textContent, '∞', 'the HUD put a clock on an endless run');
 });
 
 test('meeting a grower at market puts their stall in the chooser next time', async () => {
   const { $ } = await bootGame({ state: { [CAMPAIGN_KEY]: farmedCampaign({ met: [FRIENDS[1]] }) } });
-  assert.equal($('friends').hidden, false, 'the chooser never appeared on the map');
-  assert.equal($('play-free').hidden, true, 'the chooser and the single door were both up');
-
   const cards = [...$('friends').children];
-  assert.equal(cards.length, FRIENDS.length, 'the cast is not all accounted for');
+  assert.equal(cards.length, FRIENDS.length + 1, 'the cast — and the wholesaler — is not all accounted for');
   const open = cards.filter((c) => !c.classList.contains('locked'));
   const shut = cards.filter((c) => c.classList.contains('locked'));
-  assert.equal(open.length, 2, '葡萄 was met and their stall stayed shut');
+  assert.equal(open.length, 3, '葡萄 was met and their stall stayed shut');
   assert.equal(shut.length, 1, '苹果 was never met and their stall opened');
   assert.equal(shut[0].dataset.level, String(FRIENDS[2].level));
   assert.notEqual(shut[0].tagName, 'BUTTON', 'a grower you have not met is a figure, not a button');
@@ -393,17 +554,41 @@ test('the chooser says how each stall is stocked, English first', async () => {
   assert.ok(text.includes(FRIENDS[1].flavor));
 });
 
-test('picking a stall from the chooser opens THAT stall, and remembers it', async () => {
+test('picking a stall shows the morning\'s produce, then opens THAT stall', async () => {
   const { $, arcade } = await bootGame({ state: { [CAMPAIGN_KEY]: farmedCampaign({ met: [FRIENDS[1]] }) } });
   const cozy = [...$('friends').children].find((c) => c.dataset.level === String(FRIENDS[1].level));
   cozy.fire('click');
+
+  // the launch window: whose crate it is, and what is actually in it
+  assert.equal(screen($), 'stall', 'the stall opened without showing what there was to sell');
+  assert.ok($('stall-title').textContent.includes('Grape'), 'the crate does not say whose it is');
+  assert.ok($('stall-crate').children.length > 0, 'the crate was shown empty');
+  assert.match($('stall-note').textContent, new RegExp(`^${FRIENDS[1].crate} fruit`),
+    'the crate does not say how much there is to sell');
+  assertPainted([...$('stall-crate').children], 'the launch window');
+
+  $('stall-open').fire('click');
   assert.equal(screen($), 'game', '葡萄\'s stall did not open');
 
   arcade.tick(3);
   arcade.runTimers();
   arcade.fire('suspend');
-  assert.equal(arcade.state.get('save').friend, FRIENDS[1].level,
+  const save = arcade.state.get('save');
+  assert.equal(save.friend, FRIENDS[1].level,
     'the save forgot whose stall it was — a resume would land in the wrong one');
+  assert.ok(save.crate, 'the save forgot the crate — a resume would hand out a fresh one');
+});
+
+test('the launch window can be put back down without opening the stall', async () => {
+  const { $ } = await bootGame();
+  [...$('friends').children][0].fire('click');
+  assert.equal(screen($), 'stall');
+  $('stall-x').fire('click');
+  assert.equal(screen($), 'mode', 'the ✕ did not lead back to the map');
+
+  [...$('friends').children][0].fire('click');
+  $('stall-back').fire('click');
+  assert.equal(screen($), 'mode', 'the way out at the bottom did not lead back to the map');
 });
 
 test('a resumed run comes back to the stall it was in, and an old save to 草莓\'s', async () => {
@@ -449,6 +634,72 @@ test('the collection book still fills from a specialty stall', async () => {
   assert.ok(found && found.levels.includes(8), 'the peach on the counter was not recorded');
 });
 
+// ── the morning after ──────────────────────────────────────────────────────
+// A friend has one farm, and selling everything on it costs them the time it
+// takes to pick another. The rule only stays on the right side of the design
+// pillars because of what it never does: it never shuts the wholesaler, never
+// takes anything away, and never asks the player to come back — the same board
+// is one tap away the whole time.
+
+test('selling a friend\'s morning shuts their stall, and Again becomes the way to another', async () => {
+  const { $, arcade } = await mindedStall();          // 草莓's, and it topples
+  finishStall($, arcade);
+
+  assert.equal($('restock-note').hidden, false, 'the stall closed without a word about why');
+  assert.match($('restock-note').textContent, /Strawberry/, 'the note names the wrong friend');
+  assert.match($('restock-note').textContent, /\d+:\d\d/, 'the note gives no time to come back');
+  assert.match($('again').textContent, /Another stall/, 'Again offered a crate that is not picked yet');
+  assert.ok(arcade.writes.includes('stalls'), 'the wait was never written down');
+
+  // …and it is not a dead button: it leads to the map, where the wholesaler is
+  $('again').fire('click');
+  assert.equal(screen($), 'mode', 'Again at a sold-out stall was a dead end');
+  const cards = [...$('friends').children];
+  const berry = cards.find((c) => c.dataset.level === String(FRIENDS[0].level));
+  assert.equal(berry.disabled, true, 'a friend with nothing picked opened their stall anyway');
+  assert.match(berry.textContent, /Back in \d+:\d\d/, 'the card does not say when they are back');
+
+  const boss = cards.find((c) => c.textContent.includes('Wholesaler'));
+  assert.equal(boss.disabled, false, 'the wholesaler closed along with the friends');
+  boss.fire('click');
+  assert.equal(screen($), 'stall', 'there was nowhere to play while a friend was picking');
+});
+
+test('the countdown on the map keeps counting, on the session clock', async () => {
+  const { $, arcade } = await mindedStall();
+  finishStall($, arcade);
+  $('again').fire('click');
+  assert.equal(screen($), 'mode');
+  arcade.runTimers();                    // the second that the card is relabelled on
+  const berry = [...$('friends').children].find((c) => c.dataset.level === String(FRIENDS[0].level));
+  assert.match(berry.textContent, /Back in \d+:\d\d/, 'the countdown stopped counting');
+
+  // …and it stops with the screen, rather than ticking on behind the board
+  $('to-collection').fire('click');
+  arcade.runTimers();
+  assert.equal(screen($), 'menu', 'the clock followed the player off the map');
+});
+
+test('the wait survives a reload, and never outlives one morning', async () => {
+  const { $, arcade } = await mindedStall();
+  finishStall($, arcade);
+  const saved = arcade.state.get('stalls');
+  assert.ok(saved[FRIENDS[0].level] > Date.now(), 'the saved wait is already over');
+
+  const back = await bootGame({ state: { stalls: saved, [CAMPAIGN_KEY]: farmedCampaign() } });
+  const berry = [...back.$('friends').children].find((c) => c.dataset.level === String(FRIENDS[0].level));
+  assert.equal(berry.disabled, true, 'a reload handed the player a second morning');
+
+  // A crafted or clock-skewed epoch cannot shut anybody out for longer than
+  // their own restock: js/friends.js caps every answer at one wait.
+  const forever = await bootGame({
+    state: { stalls: { [FRIENDS[0].level]: Date.now() + 400 * 24 * 3600 * 1000 } },
+  });
+  const shut = [...forever.$('friends').children].find((c) => c.dataset.level === String(FRIENDS[0].level));
+  assert.match(shut.textContent, new RegExp(`Back in ${Math.round(FRIENDS[0].restockMs / 60000)}:`),
+    'a crafted save shut a friend out for a year');
+});
+
 // ── the map ────────────────────────────────────────────────────────────────
 // The front door is a picture of the valley: every place the game can go is a
 // spot, a spot you cannot use yet is greyed rather than hidden, and the whole
@@ -489,9 +740,49 @@ test('the collection is one tap off the map and one tap back', async () => {
   const { $ } = await bootGame();
   $('to-collection').fire('click');
   assert.equal(screen($), 'menu');
-  assert.ok($('chart').children.length > 0, 'the collection book has no chart in it');
+  assert.equal($('collection').children.length, MAX_LEVEL, 'the book is missing fruit');
+  assertPainted([...$('collection').children], 'the collection');
   $('menu-to-mode').fire('click');
   assert.equal(screen($), 'mode');
+});
+
+// The book opens now. A tile you have earned is a page of everything the tables
+// know about that fruit; a tile you have not is a silhouette that does not open,
+// which is the whole reason the silhouette is there.
+test('a fruit you have made opens a page, and one you have not does not open at all', async () => {
+  const { $ } = await bootGame({ stats: { discovered: { levels: [2, 3] } } });
+  $('to-collection').fire('click');
+  const tiles = [...$('collection').children];
+  const made = tiles.filter((t) => !t.classList.contains('locked'));
+  // the cherry falls out of the dropper and was never anybody's achievement,
+  // so it is open from the first launch — plus the two that were merged
+  assert.equal(made.length, 3, 'the book is filled in wrong');
+  assert.match($('collection-count').textContent, /2 of 10/, 'the book does not count itself');
+  assert.notEqual(tiles[MAX_LEVEL - 1].tagName, 'BUTTON', 'a fruit nobody has made can be opened');
+
+  made[2].fire('click');                       // the grape
+  assert.equal($('fruit').hidden, false, 'the tile did not open');
+  assert.ok($('fruit-name').textContent.includes('Grape'), 'the page is about somebody else');
+  assert.ok($('fruit-alt').textContent.includes('葡萄'), 'the learning line fell off the page');
+  assert.ok($('fruit-art').width > 0, 'the fruit on its own page was never painted');
+  assert.ok($('fruit-stats').children.length >= 6, 'the page has no stats on it');
+  const stats = $('fruit-stats').textContent;
+  assert.ok(stats.includes(`+${scoreOf(3)}`), 'the page does not say what a grape scores');
+  assert.ok(stats.includes(`${mergeValue(3)}元`), 'the page does not say what a merchant pays');
+  assert.ok(stats.includes('Vine'), 'the page does not say how a grape is grown');
+  assert.match($('fruit-chain').textContent, /Strawberry|Dekopon/, 'the page forgot the chain');
+
+  // …and the chain is how you move, skipping what has not been made
+  assert.equal($('fruit-prev').disabled, false, 'the strawberry below it was unreachable');
+  assert.equal($('fruit-next').disabled, true, 'a fruit nobody has made was reachable from its neighbour');
+  $('fruit-prev').fire('click');
+  assert.ok($('fruit-name').textContent.includes('Strawberry'), 'the page did not move down the chain');
+
+  $('fruit-close').fire('click');
+  assert.equal($('fruit').hidden, true, 'Close did not shut the page');
+  made[1].fire('click');
+  $('menu-to-mode').fire('click');
+  assert.equal($('fruit').hidden, true, 'the page outstayed the book it opened from');
 });
 
 test('game over returns to the map, where everything is', async () => {
@@ -800,7 +1091,8 @@ test('a settings change repaints whatever is on screen, on every screen', async 
 
 test('a replaced state re-boots both modes from storage rather than half of one', async () => {
   const { $, arcade } = await bootGame();
-  $('play-free').fire('click');
+  [...$('friends').children][0].fire('click');
+  $('stall-open').fire('click');
   assert.equal(screen($), 'game');
 
   arcade.state.store.save = undefined;
@@ -830,6 +1122,31 @@ test('every ending reaches the appraisal, and only the tidy ones pay the bonus',
   toppled.arcade.tick(2);
   const before = [...toppled.$('appraisal-lines').children];
   assert.equal(before.length, 0, 'the appraisal was up before the run ended');
+});
+
+// The preview holds five fruit and the hand holds one, all six taken out of the
+// harvest the moment the stall opens. A day that ends with them unsold must put
+// them back, or every early pack-up quietly costs the player six fruit.
+test('fruit still in hand at pack-up goes back in the crate', async () => {
+  const c = makeCampaign();
+  finishFirstRun(c, TUNING.firstRunFloor * 2);
+  buyFarm(c, Date.now());
+  c.crate = Object.create(null);
+  harvestInto(c, { level: 1, count: 12 });
+  const { $, arcade } = await bootGame({
+    settings: { reducedMotion: true },
+    state: { [CAMPAIGN_KEY]: packCampaign(c) },
+  });
+  $('play-campaign').fire('click');
+  $('to-market').fire('click');
+  assert.equal(screen($), 'market');
+
+  arcade.tick(2);
+  $('pack-up').fire('click');
+  arcade.tick(1);
+  $('appraisal-done').fire('click');
+  assert.equal($('crate-count').textContent, '12',
+    'the fruit in the dropper and the preview never came home');
 });
 
 test('a market day banks its own stats and its own score lane', async () => {

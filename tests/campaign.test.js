@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import {
   makeCampaign, STARTER_SEED,
   earn, spend, seedCount, isUnlocked, addSeeds, takeSeed, unlockedLevels,
-  crateSize, harvestInto, drawFromCrate, countOf, totalCount, levelsIn,
+  crateSize, harvestInto, drawFromCrate, returnToCrate, countOf, totalCount, levelsIn,
   makeRunTally, noteMerges, rollSeedDrip,
   finishFirstRun, canBuyFarm, buyFarm, canGoToMarket, hasFarm, couldUseAHand,
   serialize, restore,
@@ -178,6 +178,24 @@ test('the pineapple pays a bonus seed of something the player can actually plant
   assert.ok(seedCount(c, got.bonusSeed) > 0);
   // every other fruit is just fruit
   assert.equal(harvestInto(c, { level: 2, count: 6 }, makeRng(7)).bonusSeed, null);
+});
+
+// The dropper takes a whole preview out of the harvest the moment the stall
+// opens, so a day that ends early has to put the unsold part back — otherwise
+// packing up quietly costs the player the fruit still in their hands.
+test('unsold fruit goes back in the crate, and junk does not', () => {
+  const c = makeCampaign();
+  const before = crateSize(c);
+  assert.equal(returnToCrate(c, [1, 1, 7]), 3);
+  assert.equal(crateSize(c), before + 3);
+  assert.equal(countOf(c.crate, 7), 1, 'a level the crate had none of did not come back');
+
+  for (const junk of [[null], [0], [99], ['1'], [1.5], undefined, []]) {
+    const held = crateSize(c);
+    const put = returnToCrate(c, junk);
+    assert.equal(crateSize(c), held + put, `${JSON.stringify(junk)} put back something it should not have`);
+  }
+  assert.equal(returnToCrate(c, [null, 0, 99, 4]), 1, 'a mixed handful put back the wrong amount');
 });
 
 test('the crate empties exactly, one fruit per draw', () => {

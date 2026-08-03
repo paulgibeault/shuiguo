@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   makeGame, start, drop, tick, aim, serialize, restore, clampDropX,
-  finish, isSoldOut, isSettled,
+  finish, isSoldOut, isSettled, setStock, QUEUE_DEPTH,
 } from '../js/game.js';
 import { makeBody, settled } from '../js/physics.js';
 import { WORLD, RULES, PHYS, radiusOf, scoreOf, ANNIHILATE_SCORE, MAX_LEVEL, MAX_SPAWN_LEVEL } from '../js/constants.js';
@@ -500,14 +500,18 @@ test('restore rejects hostile or malformed saves', () => {
 
 test('REGRESSION: the default spawn sequence is byte-identical to the rng dropper', () => {
   // What the dropper produced before drawFruit existed: rng.int(1,5), forever,
-  // twice at makeGame and once per drop. Pinned against the raw generator
+  // and one fruit per drop in that order. Pinned against the raw generator
   // rather than against a recorded list, so it holds for any seed.
+  //
+  // The PREVIEW got deeper — the queue draws five ahead instead of one — but the
+  // stream is the same stream and it reaches the player's hand in the same
+  // order, which is the thing a player would notice.
   for (const seed of [1, 42, 1234, 0xC0FFEE]) {
     const oracle = makeRng(seed);
     const expected = Array.from({ length: 60 }, () => oracle.int(1, MAX_SPAWN_LEVEL));
 
     const g = makeGame({ rng: makeRng(seed), now: makeClock() });
-    g.state = 'playing';               // start() re-rolls; this pins makeGame's own two
+    g.state = 'playing';               // start() re-rolls; this pins makeGame's own priming
     const seen = [g.current, g.next];
     for (let i = 0; i < 58; i++) {
       g.canDrop = true;
@@ -519,9 +523,19 @@ test('REGRESSION: the default spawn sequence is byte-identical to the rng droppe
   }
 });
 
+test('the preview is five deep, and it is the front of the same sequence', () => {
+  const oracle = makeRng(99);
+  const expected = Array.from({ length: QUEUE_DEPTH + 1 }, () => oracle.int(1, MAX_SPAWN_LEVEL));
+  const g = makeGame({ rng: makeRng(99), now: makeClock() });
+  assert.equal(g.queue.length, QUEUE_DEPTH, 'an endless board did not fill its preview');
+  assert.deepEqual([g.current, ...g.queue], expected);
+  assert.equal(g.next, g.queue[0], 'next is not the head of the queue');
+});
+
 test('REGRESSION: start() re-rolls from the rng exactly as it always did', () => {
   const oracle = makeRng(77);
-  oracle.int(1, MAX_SPAWN_LEVEL); oracle.int(1, MAX_SPAWN_LEVEL);   // makeGame's two
+  // makeGame's own priming: the hand, then the whole preview behind it
+  for (let i = 0; i <= QUEUE_DEPTH; i++) oracle.int(1, MAX_SPAWN_LEVEL);
   const g = makeGame({ rng: makeRng(77), now: makeClock() });
   start(g);
   assert.equal(g.current, oracle.int(1, MAX_SPAWN_LEVEL));
@@ -612,6 +626,92 @@ test('a crate of big fruit clamps to the walls by what is actually held', () => 
   assert.equal(clampDropX(g, -100), r);
   assert.equal(clampDropX(g, 9999), WORLD.width - r);
   assert.ok(r * 2 < WORLD.width, 'a watermelon that cannot be dropped at all is a bug, not a risk');
+});
+
+// A friend's stall: a crate that runs out, holding only what a sky can send
+// down. It is `finite` WITHOUT being `crated`, which is the combination that
+// used to be unreachable — and the one that must not quietly inherit the
+// campaign's looser rule about what may sit in the dropper.
+test('a finite stall runs out like a crate and stays as strict as free play', () => {
+  const left = [3, 4, 5];
+  const g = makeGame({
+    rng: makeRng(5), now: makeClock(), finite: true,
+    drawFruit: () => (left.length ? left.shift() : null),
+  });
+  assert.equal(g.crated, false, "a friend's morning was mistaken for a campaign harvest");
+  assert.equal(g.current, null, 'a finite stall tipped its crate out before it opened');
+
+  start(g);
+  assert.equal(g.current, 3);
+  assert.deepEqual(g.queue, [4, 5], 'the preview did not take what was left');
+
+  // the empty hand a crate can have…
+  assert.ok(restore(g, { v: 1, score: 0, current: null, next: null, fruits: [] }),
+    'a finite stall refused the empty hand it can genuinely reach');
+  // …and free play's own bound, untouched: a watermelon in the hand never
+  // happened on a board stocked out of the sky.
+  assert.equal(restore(g, { v: 1, score: 0, current: MAX_LEVEL, next: 1, fruits: [] }), false,
+    "a friend's stall accepted a fruit it could never spawn");
+});
+
+test('setStock re-points the dropper without touching the board', () => {
+  const { g, now } = playingGame();
+  drop(g, 100); sim(g, now, 0.6);
+  const onBoard = g.bodies.length;
+
+  const left = [2, 2];
+  setStock(g, { draw: () => (left.length ? left.shift() : null), finite: true });
+  assert.equal(g.bodies.length, onBoard, 'restocking swept the counter');
+  assert.ok(g.finite, 'the new stock did not bring its own ending with it');
+  start(g);
+  assert.equal(g.current, 2);
+  assert.deepEqual(g.queue, [2]);
+
+  setStock(g, { draw: () => 1 });
+  start(g);
+  assert.equal(g.queue.length, QUEUE_DEPTH, 'an endless restock still ran out');
+  assert.equal(g.finite, false);
+});
+
+// A whole preview out of a finite crate is in the player's hands the moment the
+// stall opens. A save that forgot them would eat QUEUE_DEPTH of the harvest per
+// suspend, which is real money in the campaign.
+test('the whole preview survives a save, and a shallow save fills back up', () => {
+  // one for the hand, then one per queue slot, drawn in order
+  const drawn = Array.from({ length: QUEUE_DEPTH + 1 }, (_, i) => i + 1);
+  const left = [...drawn];
+  const queued = drawn.slice(1);
+  const g = makeGame({
+    rng: makeRng(5), now: makeClock(), crated: true,
+    drawFruit: () => (left.length ? left.shift() : null),
+  });
+  start(g);
+  const save = serialize(g);
+  assert.deepEqual(save.queue, queued);
+  assert.equal(save.next, queued[0], 'the head of the queue is still called next on disk');
+
+  const g2 = makeGame({ rng: makeRng(5), now: makeClock(), crated: true, drawFruit: () => null });
+  assert.ok(restore(g2, save));
+  assert.deepEqual(g2.queue, queued, 'the preview was dropped on the floor');
+
+  // a board written before the preview went deep carries only `next`
+  const shallow = { v: 1, score: 0, current: 1, next: 2, fruits: [], rngState: 3 };
+  const g3 = makeGame({ rng: makeRng(5), now: makeClock(), drawFruit: () => 4 });
+  assert.ok(restore(g3, shallow));
+  assert.deepEqual(g3.queue, [2, ...Array(QUEUE_DEPTH - 1).fill(4)],
+    'an old save did not fill its new preview');
+});
+
+test('a hole in the preview is refused, not repaired', () => {
+  const g = makeGame({ rng: makeRng(5), now: makeClock(), drawFruit: () => 1 });
+  const board = { v: 1, score: 0, current: 1, next: 1, fruits: [] };
+  const tooDeep = Array(QUEUE_DEPTH + 1).fill(1);
+  for (const queue of [[1, null, 2], [1, 99], [1, 0], tooDeep, [1, 1.5]]) {
+    assert.equal(restore(g, { ...board, queue }), false,
+      `a preview of ${JSON.stringify(queue)} was believed`);
+  }
+  assert.equal(restore(g, { ...board, current: null, next: null, queue: [1] }), false,
+    'a save queued fruit behind an empty hand');
 });
 
 test('the board settles, and isSettled says so', () => {

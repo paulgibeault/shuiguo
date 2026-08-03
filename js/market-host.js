@@ -22,10 +22,11 @@ import { makeEffects, pushEvent, pruneEffects, resetEffects } from './effects.js
 import { deepestChain } from './progress.js';
 import {
   drawFromCrate, crateSize, levelsIn, countOf, makeRunTally, noteMerges, rollSeedDrip,
-  finishFirstRun, earn, canGoToMarket,
+  finishFirstRun, earn, canGoToMarket, returnToCrate,
 } from './campaign.js';
 import { appraise, tidyBonusPercent, mergeValue, annihilateValue } from './economy.js';
 import { paintChip } from './chips.js';
+import { renderQueue } from './queue.js';
 import { sfx } from './sfx.js';
 
 const $ = (id) => document.getElementById(id);
@@ -150,14 +151,12 @@ export function makeMarketHost({ canvas, router, save, getSettings, rng, loop, s
   function refreshHud() {
     if (!g) return;
     $('m-score').textContent = String(runEarnings);
-    const label = $('m-next-label');
-    if (g.next == null) {
-      label.textContent = crateSize(save.get()) > 0 ? '' : 'Sold out 卖完了';
-      clearCanvas($('m-next'));
-    } else {
-      const f = FRUITS[g.next - 1];
-      label.textContent = `${f.name} ${f.hanzi}`;
-      paintChip($('m-next'), g.next, 0.34);
+    // What is coming, along the rail. An empty queue with an empty crate is
+    // the end of the day and says so; an empty queue with fruit still in the
+    // crate cannot happen, but says nothing rather than lying about it.
+    renderQueue($('m-queue-chips'), g.queue, $('m-next-label'));
+    if (g.queue.length === 0 && crateSize(save.get()) === 0) {
+      $('m-next-label').textContent = 'Sold out 卖完了';
     }
     buildCrateStrip();
     refreshPackUp();
@@ -176,12 +175,6 @@ export function makeMarketHost({ canvas, router, save, getSettings, rng, loop, s
     $('pack-up').textContent = earned > 0
       ? `Pack up 收摊 +${tidyBonusPercent()}%`
       : 'Pack up 收摊';
-  }
-
-  function clearCanvas(el) {
-    const c = el.getContext('2d');
-    c.setTransform(1, 0, 0, 1, 0, 0);
-    c.clearRect(0, 0, el.width, el.height);
   }
 
   // What is left to sell, as chips with counts. It is the run's whole clock:
@@ -283,6 +276,11 @@ export function makeMarketHost({ canvas, router, save, getSettings, rng, loop, s
     save.clearMarket();
 
     const c = save.get();
+    // Whatever is still in the player's hands goes back in the crate — see
+    // js/campaign.js §returnToCrate. It is not a sale (it never reached the
+    // counter), it is simply not a loss either: the harvest is still theirs and
+    // it can go to market again tomorrow.
+    returnToCrate(c, [g.current, ...g.queue].filter((level) => level != null));
     const isFirstRun = c.phase === 'gift-run';
     const bill = appraise({
       earnings: runEarnings,
@@ -419,6 +417,9 @@ export function makeMarketHost({ canvas, router, save, getSettings, rng, loop, s
   return {
     begin, resume, enter, exit, game, frame, refreshHud,
     resize: () => R.resize(),
+    // The counter bar floats over the foot of the board on this screen too, and
+    // it is the same bar — so it is the same reservation (js/render.js).
+    setBottomInset: (px) => R.setBottomInset(px),
     flush: () => { if (saveDirty) flushBoard(); },
     isLive: () => live,
     setHooks(h) { onChain = h.onChain || onChain; onUnlock = h.onUnlock || onUnlock; },

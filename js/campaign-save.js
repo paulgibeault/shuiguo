@@ -20,9 +20,12 @@ import { serialize as serializeCampaign, restore as restoreCampaign, makeCampaig
 export const CAMPAIGN_KEY = 'campaign';
 export const MARKET_KEY = 'market-save';
 
-// Keys free play owns. Named here so the isolation test can assert the two
-// sets never intersect, rather than trusting a comment.
-export const FREE_PLAY_KEYS = ['save'];
+// Keys free play owns: today's mid-run board, and which friends are still
+// picking the next morning's produce (js/friends.js §the morning after — a
+// friend's farm is not the player's, and the campaign has never heard of it).
+// Named here so the isolation test can assert the two sets never intersect,
+// rather than trusting a comment.
+export const FREE_PLAY_KEYS = ['save', 'stalls'];
 export const CAMPAIGN_KEYS = [CAMPAIGN_KEY, MARKET_KEY];
 
 export function makeCampaignSave(state) {

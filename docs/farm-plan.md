@@ -37,6 +37,28 @@ These came out of the design conversation and are settled:
    stall (草莓) posts to `classic` and the records, because a specialty
    loadout's score is not comparable with anybody else's.
 
+   *Revised again (crates).* A friend's stall now hands over a FINITE morning's
+   produce, previewed in a launch window before the run and shown emptying on
+   the HUD during it, with Pack up 收摊 and sold-out endings to match the
+   market's. The endless board moved to the WHOLESALER (批发商), a stall of its
+   own that is always open and evenly stocked — so free play's rng sequence is
+   still exactly free play's, reached through one more door. The records gate
+   moved with it: `classic` and the records now want an endless AND balanced
+   run, since a capped run and an uncapped one are not the same game. Cash is
+   still the only campaign field any of them may write, and every stall pays the
+   same split.
+
+   *Revised again (restocking).* A friend has one farm, so their stall now
+   carries a clock: selling their morning shuts it for `FRIENDS[].restockMs`,
+   shown as a countdown on the map card and on the game-over sheet, where Again
+   becomes **Another stall 换一摊** rather than a dead button. It stays on the
+   right side of the "no retention mechanics" pillar by construction: the
+   WHOLESALER has no clock and never will (there is no field behind an endless
+   crate), nothing expires or is lost by staying away, and `msUntilRestock` caps
+   every answer at one restock — so no save, timezone or clock skew can shut a
+   friend for longer than their own morning takes. The clock is free play's own
+   state, under a new `stalls` key; the campaign never sees it.
+
 And the design pillars the decisions rest on:
 
 - **Entertainment, not engagement.** No retention mechanics. Nothing rots,
@@ -130,11 +152,12 @@ simply free growth — single-player and generosity-first, we don't fight it.
 
 | Key | Owner | Contents |
 |---|---|---|
-| `save` | free play | unchanged — today's mid-run board save |
+| `save` | free play | today's mid-run board save, plus whose stall it is and what is left of their crate |
+| `stalls` | free play | which friends are still picking the next morning, as level → epoch |
 | `campaign` | campaign | cash, farm, seeds, unlocks, flags, crate (Arcade.state) |
 | `market-save` | campaign | mid-run campaign board + remaining crate + run seeds |
 | `discovered` | shared | unchanged — the global collection book |
-| scores `classic` | free play | unchanged — balanced stall only (#17) |
+| scores `classic` | free play | unchanged — the endless, balanced stall only (the wholesaler's) |
 | scores `campaign` | campaign | market-run scores, separate lane |
 
 **Seed unlocks are campaign-scoped.** The menu chart / `discovered` stays the
@@ -559,7 +582,8 @@ Stardew's job.
 ## 9. Later options (designed-for, not built)
 
 - **Crate packing:** choose what goes to market (strategy layer over the
-  MVP's take-everything crate). The crate model already supports it.
+  MVP's take-everything crate). The crate model already supports it, and the
+  friends' launch window is the screen it would live on.
 - **Distribution mode:** the "crate as spawn-weights" alternate structure,
   as a post-campaign unlockable stall variant.
 - **Decorations shop:** cash sink for stall/farm cosmetics that carry into

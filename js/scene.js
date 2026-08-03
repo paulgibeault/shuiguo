@@ -66,11 +66,17 @@ export function themeOf(settings) {
 // the physics ever touches goes below WORLD.floorY, so down here the friend
 // can never conflict with play, only keep it company.
 //
-// The apron is painted as far down as the canvas goes (paintStall's
-// under-counter fill), and the world is letterboxed top-and-bottom on every
-// portrait viewport — so the seat is visible wherever the game is actually
-// played, and in a very short landscape window the friend is simply below the
-// crop instead of in the way. Returns the fruit's CENTRE.
+// The apron is a shelf with three things on it, and this is the left end of
+// them: the friend here, the crate in the middle and Pack up at the far right
+// (the other two are DOM — see .counter in style.css). The button is the reason
+// that order and not its mirror: a button is opaque, and a friend sitting
+// behind one is a friend nobody ever sees.
+//
+// The apron is painted as far down as the canvas goes (paintStall's apron), and
+// the renderer keeps the counter's band clear of the world — so the seat is
+// visible wherever the game is actually played, and in a very short landscape
+// window the friend is simply below the crop instead of in the way. Returns the
+// fruit's CENTRE.
 export function perchAt(r) {
   return { x: SCENE.wall + r * 1.1, y: WORLD.floorY + SCENE.wall + 5 + r };
 }
@@ -227,38 +233,102 @@ export function paintStall(ctx, th) {
   const inner = WORLD.floorY - top;
   const counter = WORLD.floorY + w + 5;
 
-  // Under the counter: the world ends at floorY but the canvas does not — on a
-  // tall viewport the letterbox below would otherwise show open sky beneath a
-  // solid wooden bench. Deliberately generous; it is only ever seen as a strip.
-  ctx.fillStyle = th.woodEdge;
-  ctx.fillRect(-200, counter, WORLD.width + 400, 400);
-
+  paintApron(ctx, th, counter);
   plank(ctx, th, -w, top, w, inner + w, false, 3);                    // left wall
   plank(ctx, th, WORLD.width, top, w, inner + w, false, 3);           // right wall
   plank(ctx, th, -w, WORLD.floorY, WORLD.width + 2 * w, w + 5, true, 3); // counter
+}
+
+// Under the counter: the world ends at floorY but the canvas does not, and a
+// portrait viewport leaves more slack below the world than above it (see
+// js/render.js §TOP_SHARE) — so this is not a strip any more, it is the front
+// of the stall, and it is where the friend minding the board sits.
+//
+// It used to be one flat rectangle of the darkest wood, which at a phone's
+// letterbox read as the bottom of the screen having fallen off. Boarded like
+// every other timber on the stall instead: vertical front planks, a nail at
+// each joint, and the counter's own shadow across the top of them.
+//
+// Deliberately generous downward — the canvas ends long before this does.
+const APRON_BOARDS = 6;
+const APRON_DROP = 400;
+
+function paintApron(ctx, th, y) {
+  const w = SCENE.wall;
+  const left = -w - 200, span = WORLD.width + 2 * w + 400;
+  ctx.fillStyle = th.woodDark;
+  ctx.fillRect(left, y, span, APRON_DROP);
+
+  // the front boards, on the world's own pitch and phased off the stall's left
+  // wall, so the joints line up with the timber above them rather than with
+  // whatever letterbox happens to be showing either side of it
+  const pitch = (WORLD.width + 2 * w) / APRON_BOARDS;
+  ctx.strokeStyle = th.woodEdge;
+  ctx.lineWidth = 1.2;
+  for (let x = -w - Math.ceil(200 / pitch) * pitch; x < left + span; x += pitch) {
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.lineTo(x, y + APRON_DROP);
+    ctx.stroke();
+    ctx.fillStyle = th.nail;
+    ctx.beginPath();
+    ctx.arc(x + pitch / 2, y + 9, 1.4, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // the counter's shadow on the boards, so the lip above reads as a lip
+  ctx.fillStyle = cached(ctx, 'apron-shadow', () => {
+    const g = ctx.createLinearGradient(0, y, 0, y + 26);
+    g.addColorStop(0, 'rgba(0, 0, 0, 0.3)');
+    g.addColorStop(1, 'rgba(0, 0, 0, 0)');
+    return g;
+  });
+  ctx.fillRect(left, y, span, 26);
 }
 
 // The awning: solid stripe band with a scalloped fringe. Its fringe hangs just
 // above the deadline, so "the pile reached the line" and "the stall is full to
 // the canopy" are the same picture. Drawn behind everything in the play area —
 // the held fruit hangs in front of it.
-export function paintAwning(ctx, th) {
+//
+// `topY` is the world y of the top edge of the CANVAS, which on any viewport
+// taller than the world's own aspect is well above the world's own top. The
+// canopy runs all the way up to it: the alternative is what this used to be —
+// a band of stripes floating on a sliver of sky, with the DOM header above the
+// sliver, which read as a seam across the top of the screen rather than as a
+// stall you are standing at. Defaulted, so the callers that only want the
+// designed band (and the tests) need say nothing.
+export function paintAwning(ctx, th, topY = -20) {
   const w = SCENE.wall;
   const left = -w, span = WORLD.width + 2 * w;
   const n = SCENE.scallops;
   const sw = span / n;                 // stripe width == scallop diameter
   const bottom = SCENE.awningBottom;
   const rad = sw / 2;
+  const top = Math.min(topY, -20);     // never SHORTER than the designed band
 
   for (let i = 0; i < n; i++) {
     ctx.fillStyle = th.awning[i % 2];
     const x = left + i * sw;
-    ctx.fillRect(x, -20, sw, bottom + 20);
+    ctx.fillRect(x, top, sw, bottom - top);
     ctx.beginPath();                    // the scallop, bulging down
     ctx.arc(x + rad, bottom, rad, 0, Math.PI);
     ctx.closePath();
     ctx.fill();
   }
+
+  // Cloth, not paint: the canopy is deepest in its own shade where it meets the
+  // roof and catches the light at the valance. Without this the extended band
+  // is a flat slab of two colours across the top fifth of a phone.
+  const fold = Math.round(top);
+  ctx.fillStyle = cached(ctx, `awning-fold:${fold}`, () => {
+    const g = ctx.createLinearGradient(0, fold, 0, bottom);
+    g.addColorStop(0, 'rgba(0, 0, 0, 0.22)');
+    g.addColorStop(0.55, 'rgba(0, 0, 0, 0.04)');
+    g.addColorStop(1, 'rgba(255, 255, 255, 0.10)');
+    return g;
+  });
+  ctx.fillRect(left, top, span, bottom - top);
 
   // a shadow line under the valance gives the canvas some thickness
   ctx.strokeStyle = th.awningEdge;
@@ -270,6 +340,16 @@ export function paintAwning(ctx, th) {
     ctx.arc(x + rad, bottom, rad, Math.PI, 0, true);
   }
   ctx.stroke();
+
+  // …and the shade the canopy throws into the stall, so the fringe hangs in
+  // front of the board rather than being printed on it.
+  ctx.fillStyle = cached(ctx, 'awning-cast', () => {
+    const g = ctx.createLinearGradient(0, bottom, 0, bottom + rad + 46);
+    g.addColorStop(0, 'rgba(0, 0, 0, 0.14)');
+    g.addColorStop(1, 'rgba(0, 0, 0, 0)');
+    return g;
+  });
+  ctx.fillRect(left, bottom, span, rad + 46);
 }
 
 // Dark theme only: two paper lanterns strung under the awning, near the walls
