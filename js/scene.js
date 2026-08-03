@@ -55,20 +55,24 @@ export function themeOf(settings) {
   return THEMES[settings && settings.theme === 'dark' ? 'dark' : 'light'];
 }
 
-// Where a friend sits while they watch you work.
+// Where a friend sits while they watch you work: on the stall's front apron,
+// BELOW the counter, down at the bottom-left like somebody on a stool at the
+// end of the stand.
 //
-// The top of the left-hand plank is the one flat surface on this stall that is
-// not the board: everything between the walls is where fruit land, and the
-// counter is the bottom of the pile. Small — a little wider than the plank it
-// sits on, so it reads as perched rather than as something that fell in — and
-// tucked under the near corner of the awning, which is exactly where you would
-// sit if you were minding a stall and not working it.
+// Below the counter is the one place on this stall that is never the board.
+// The first perch was the top of the left plank — level with the deadline,
+// which put the friend square in the drop path: aim left and the held fruit,
+// the ghost line and the falling fruit all passed through their face. Nothing
+// the physics ever touches goes below WORLD.floorY, so down here the friend
+// can never conflict with play, only keep it company.
 //
-// It lives here because it is scene geometry: the plank's top is
-// `WORLD.deadlineY - 20` in paintStall and the host has no business knowing
-// that. Returns the fruit's CENTRE, so a painter can use it directly.
+// The apron is painted as far down as the canvas goes (paintStall's
+// under-counter fill), and the world is letterboxed top-and-bottom on every
+// portrait viewport — so the seat is visible wherever the game is actually
+// played, and in a very short landscape window the friend is simply below the
+// crop instead of in the way. Returns the fruit's CENTRE.
 export function perchAt(r) {
-  return { x: SCENE.wall * 0.9, y: WORLD.deadlineY - 20 - r };
+  return { x: SCENE.wall + r * 1.1, y: WORLD.floorY + SCENE.wall + 5 + r };
 }
 
 // How big a perched friend is drawn, in world units. Sized off the plank

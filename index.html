@@ -36,14 +36,17 @@
          the router shows exactly one of the three. -->
     <header id="farm-hud" class="campaign-hud" hidden>
       <div class="stat"><span class="label">Cash 元</span><span id="farm-cash" class="value">0</span></div>
-      <button id="to-shop" type="button">Shop 商店</button>
+      <!-- English-only up here: this is an action bar read mid-game, and the
+           map's spots already carry the bilingual names. -->
+      <button id="to-shop" type="button">Shop</button>
       <button id="to-market" class="go" type="button">
-        Market 市场 <span id="crate-count" class="pill">0</span>
+        Market <span id="crate-count" class="pill">0</span>
       </button>
-      <!-- 🍓 on the way out when the crate is empty and nothing is ripening
-           soon: a friend could use a hand. Derived on every refresh, so it
-           retires the moment there is anything to carry down the hill. -->
-      <button id="farm-to-menu" class="icon" type="button" aria-label="Back to the map">☰<span id="farm-badge" class="badge" hidden>🍓</span></button>
+      <!-- The way out says where it goes — a ☰ read as "menu, maybe", and
+           leaving the farm should not take detective work. 🍓 rides on it when
+           the crate is empty and nothing is ripening soon: a friend could use
+           a hand, and the map is where the friends are. -->
+      <button id="farm-to-menu" type="button">Map<span id="farm-badge" class="badge" hidden>🍓</span></button>
     </header>
 
     <header id="market-hud" class="campaign-hud" hidden>

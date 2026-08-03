@@ -93,8 +93,8 @@ export function makeRenderer(canvas) {
     paintAwning(ctx, th);
     paintLanterns(ctx, th, tMs, motion);
     paintLeaf(ctx, th, tMs, motion);
-    // In FRONT of the awning it is tucked under, behind every fruit — scenery
-    // with a face, never something the pile can land on.
+    // On the front apron below the counter — outside the field of play, so
+    // never in the drop path and never something the pile can land on.
     drawPerched(fx, tMs, settings.reducedMotion);
 
     drawDeadline(g, th, tMs, motion);

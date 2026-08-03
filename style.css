@@ -505,11 +505,17 @@ button.big {
 .map .shop-grid { justify-content: center; margin-top: 0.2rem; }
 .map + .hint { max-width: 19rem; }
 
-/* One visible way out of a drawer, where every drawer has it. */
+/* One visible way out of a drawer, anchored top-LEFT where every drawer has
+ * it. Sticky, not absolute: the sheet scrolls, and an absolutely positioned ✕
+ * rides the layout wherever the flow puts it — sticky pins it to the visible
+ * top edge and keeps it there while the shop scrolls under it. The negative
+ * bottom margin lets the title keep the centre line to itself. */
 .sheet-x {
-  position: absolute;
-  top: 0.7rem;
-  right: 0.8rem;
+  position: sticky;
+  top: 0;
+  align-self: flex-start;
+  z-index: 2;
+  margin: -0.3rem 0 -2.6rem;
   padding: 0.15rem 0.65rem;
   font-size: 1rem;
   line-height: 1.6;
