@@ -3,7 +3,7 @@
   "short_name": "shuǐ guǒ tān",
   "description": "Drop fruit, merge pairs, grow the watermelon. A cozy physics puzzle for Paul's Arcade.",
   "scope": "/shuiguo/",
-  "start_url": "./index.html?v=0.1.6",
+  "start_url": "./index.html?v=0.1.7",
   "display": "standalone",
   "background_color": "#f7f1e3",
   "theme_color": "#d23c50",
