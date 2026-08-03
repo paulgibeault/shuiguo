@@ -14,6 +14,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { bootGame } from './fake-dom.js';
 import { TUNING, RULES, scoreOf } from '../js/constants.js';
+import { mergeValue, chainMultiplier } from '../js/economy.js';
+import { multiplier } from '../js/format.js';
 import { FREE_PLAY_KEYS, CAMPAIGN_KEYS, CAMPAIGN_KEY, MARKET_KEY } from '../js/campaign-save.js';
 import { makeCampaign, finishFirstRun, buyFarm, harvestInto, noteMerges, makeRunTally, serialize as packCampaign } from '../js/campaign.js';
 
@@ -148,6 +150,72 @@ test('the 元 on the HUD at pack-up is exactly the appraisal\'s Merges line', as
   const merges = [...$('appraisal-lines').children].find((r) => r.textContent.includes('Merges'));
   assert.ok(merges, 'the appraisal itemized no merges');
   assert.equal(merges.textContent, `Merges 合并+${onHud}`, 'the receipt disagrees with the HUD');
+});
+
+// ── what the board says a merge was worth ──────────────────────────────────
+// During a market day every reward on screen is money; in free play every
+// reward on screen is arcade score. The renderer is shared and knows about
+// neither — the popup's words are supplied by the host that pushed the event —
+// so what each mode ends up saying is worth pinning on both sides.
+
+// Every string painted on the board since the last look. Score floats are the
+// only text the board draws, so this is them.
+function floatsOn($) {
+  return $('board').drawnText.filter((s) => s.startsWith('+'));
+}
+
+test('a campaign merge float is paid in 元, at the merchant price', async () => {
+  const { $, arcade } = await resumedMarket();
+  arcade.tick(2);
+  const floats = floatsOn($);
+  assert.ok(floats.length > 0, 'the merge produced no float at all');
+  for (const f of floats) assert.match(f, /^\+\d+元/, `a market-day float said "${f}"`);
+  // and it is the merchant's figure, not the arcade score the engine banked
+  assert.equal(floats[0], `+${mergeValue(8, 1)}元`);
+  assert.notEqual(floats[0], `+${scoreOf(8)}元`, 'the float quoted face value');
+});
+
+test('a free-play merge float is byte-identical to what it always said', async () => {
+  // two cherries already inside each other's radius: they merge on tick one
+  const board = { v: 1, score: 0, current: 1, next: 1, fruits: [[1, 165, 540], [1, 193, 540]], rngState: 7 };
+  const { $, arcade } = await bootGame({ state: { save: board }, settings: { reducedMotion: true } });
+  assert.equal(screen($), 'game');
+  arcade.tick(2);
+  const floats = floatsOn($);
+  assert.ok(floats.length > 0, 'the merge produced no float at all');
+  assert.equal(floats[0], `+${scoreOf(2)}`, 'free play started talking about money');
+  for (const f of floats) assert.ok(!f.includes('元'), `free play's float said "${f}"`);
+});
+
+// Four pairs of cherries, each pair inside its own radius and well clear of the
+// next. They all merge on the same tick, which the wall-time window credits as
+// a 4-chain — the shortest honest way to raise a banner out of a real board.
+const FOUR_CHAIN = {
+  v: 1, score: 0, current: 1, next: 1, rngState: 5,
+  fruits: [[1, 20, 540], [1, 48, 540], [1, 90, 540], [1, 118, 540],
+    [1, 160, 540], [1, 188, 540], [1, 230, 540], [1, 258, 540]],
+};
+
+test('the chain banner carries its bonus at market and stays plain in free play', async () => {
+  const paid = await resumedMarket({ [MARKET_KEY]: { v: 1, board: FOUR_CHAIN, tally: {}, earnings: 0 } });
+  paid.arcade.tick(2);
+  assert.equal(paid.$('banner').hidden, false, 'a 4-chain raised no banner');
+  assert.equal(paid.$('banner').textContent, `4-chain! 四连! ×${multiplier(chainMultiplier(4))}`);
+  assert.match(paid.$('banner').textContent, /×1\.45$/, 'the bonus is not two decimals of the knob');
+
+  const free = await bootGame({ state: { save: FOUR_CHAIN }, settings: { reducedMotion: true } });
+  free.arcade.tick(2);
+  assert.equal(free.$('banner').hidden, false, 'a 4-chain raised no banner in free play');
+  assert.equal(free.$('banner').textContent, '4-chain! 四连!', 'free play\'s banner grew a price tag');
+});
+
+// Floats are information, not decoration — js/effects.js lets them through
+// under reduced motion as a static fade for exactly that reason, and a market
+// day's takings are the most information a float ever carries.
+test('reduced motion still shows what a merge paid', async () => {
+  const { $, arcade } = await resumedMarket();
+  arcade.tick(2);
+  assert.ok(floatsOn($).length > 0, 'reduced motion swallowed the payout');
 });
 
 test('playing free play writes free play keys and NOT ONE campaign key', async () => {
@@ -423,17 +491,25 @@ test('a replaced state re-boots both modes from storage rather than half of one'
 
 // ── the run ends every way it can ──────────────────────────────────────────
 
+// The bonus is a rounded tenth of the subtotal, so this needs a run with real
+// value in it. Dropping four fruit out of the gift crate does not reliably have
+// any — the crate is mostly cherries, and an all-cherry board rounds the bonus
+// to nothing about one time in thirty. Resume a board that has already merged
+// instead: the assertion is about packing up, not about what the crate rolled.
 test('every ending reaches the appraisal, and only the tidy ones pay the bonus', async () => {
-  const tidy = await bootGame();
-  tidy.$('play-campaign').fire('click');
+  const tidy = await resumedMarket();
   tidy.arcade.tick(2);
-  // sell something, or there is no subtotal for the bonus to be a fraction of
-  for (const x of [80, 150, 220, 290]) await dropAt(tidy, x);
   tidy.$('pack-up').fire('click');
   tidy.arcade.tick(1);
   const labels = [...tidy.$('appraisal-lines').children].map((r) => r.textContent);
   assert.ok(labels.some((l) => l.includes('Tidy')), 'packing up earned no Tidy Stall');
   assert.equal(tidy.arcade.state.get(MARKET_KEY), undefined, 'the finished run left a resumable board behind');
+
+  // …and toppling out of the same board earns none of it
+  const toppled = await resumedMarket();
+  toppled.arcade.tick(2);
+  const before = [...toppled.$('appraisal-lines').children];
+  assert.equal(before.length, 0, 'the appraisal was up before the run ended');
 });
 
 test('a market day banks its own stats and its own score lane', async () => {

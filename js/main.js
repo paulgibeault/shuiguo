@@ -22,6 +22,8 @@ import { sfx } from './sfx.js';
 import { makeRng } from './arcade-rng.js';
 import { paintChip } from './chips.js';
 import { makeRouter } from './mode.js';
+import { chainMultiplier } from './economy.js';
+import { multiplier } from './format.js';
 import { makeCampaignSave, bootScreen } from './campaign-save.js';
 import { makeFarmHost } from './farm-host.js';
 import { makeMarketHost } from './market-host.js';
@@ -260,10 +262,14 @@ const BANNER_MS = 2000;
 const CHAIN_HANZI = ['三', '四', '五', '六', '七', '八', '九', '十'];
 let bannerTimer = null;
 
-function showChainBanner(n) {
+// `extra` is a tail the host may hang off the end — during a market day, the
+// bonus the combo is actually paying (js/economy.js owns the number, this owns
+// none of it). Free play passes nothing and reads exactly as it always has.
+function showChainBanner(n, extra) {
   const el = $('banner');
   const hanzi = CHAIN_HANZI[n - 3];
-  el.textContent = hanzi ? `${n}-chain! ${hanzi}连!` : `${n}-chain!`;
+  const base = hanzi ? `${n}-chain! ${hanzi}连!` : `${n}-chain!`;
+  el.textContent = extra ? `${base} ${extra}` : base;
   el.hidden = false;
   // restart the entry animation even if a banner is already up
   el.style.animation = 'none';
@@ -586,9 +592,11 @@ const market = makeMarketHost({
 });
 
 // The campaign borrows free play's two celebrations wholesale: a chain is a
-// chain, and a first-make is a card. Only the kicker differs.
+// chain, and a first-make is a card. Only the kicker differs — and the chain
+// banner, which during a market day says what the combo is paying, because
+// every reward on screen there is money.
 market.setHooks({
-  onChain: showChainBanner,
+  onChain: (n) => showChainBanner(n, `×${multiplier(chainMultiplier(n))}`),
   onUnlock: (levels) => { queueSeedCards(levels); commitDiscovered(levels); },
 });
 

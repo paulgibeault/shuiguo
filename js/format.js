@@ -41,6 +41,20 @@ function pad(n) { return n < 10 ? `0${n}` : String(n); }
  * numbers use, and a stat row that reads 4.320 in one place and 4,320 in
  * another looks broken rather than localized.
  */
+/**
+ * A multiplier, as short as it can honestly be: two decimals at most, and no
+ * trailing zeros — 1.45, 1.5, 2, never 1.50 or 2.00.
+ *
+ * The chain banner wears one, and a banner is a thing read in half a second at
+ * the edge of vision. `1 + 0.15 × 3` is 1.4500000000000002 in floating point,
+ * so rounding here is not a nicety; it is the difference between a celebration
+ * and a bug report.
+ */
+export function multiplier(n) {
+  if (typeof n !== 'number' || !isFinite(n)) return '1';
+  return n.toFixed(2).replace(/\.?0+$/, '');
+}
+
 export function money(n) {
   if (typeof n !== 'number' || !isFinite(n)) return '0';
   const whole = Math.abs(Math.trunc(n));

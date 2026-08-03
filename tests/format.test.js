@@ -3,7 +3,7 @@
 // promise that is off by a second the wrong way is a promise that gets caught.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { countdown, money } from '../js/format.js';
+import { countdown, money, multiplier } from '../js/format.js';
 
 const SEC = 1000;
 const MIN = 60 * SEC;
@@ -77,4 +77,22 @@ test('nonsense money is zero rather than NaN on the shop sheet', () => {
   // a negative can never happen (js/campaign.js refuses to overdraw) but if one
   // ever does it should read as a debt rather than as a mangled string
   assert.equal(money(-1200), '-1,200');
+});
+
+// The chain banner wears a multiplier and is read in half a second at the edge
+// of vision, so it has to be as short as it can honestly be — and it is built
+// from a float, where 1 + 0.15 × 3 is 1.4500000000000002.
+test('a multiplier reads as short as it honestly can', () => {
+  assert.equal(multiplier(1 + 0.15 * 3), '1.45');
+  assert.equal(multiplier(1.5), '1.5', 'a trailing zero was left on');
+  assert.equal(multiplier(2), '2', 'a whole multiplier came with decimals');
+  assert.equal(multiplier(1), '1');
+  assert.equal(multiplier(1.15), '1.15');
+  assert.equal(multiplier(1.456), '1.46', 'more precision than a banner can carry');
+});
+
+test('a nonsense multiplier is a plain 1 rather than NaN across the board', () => {
+  for (const junk of [NaN, Infinity, null, undefined, '1.45', {}]) {
+    assert.equal(multiplier(junk), '1', `multiplier(${String(junk)})`);
+  }
 });

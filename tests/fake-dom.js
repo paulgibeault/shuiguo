@@ -29,9 +29,14 @@ export function declaredIds() {
   return new Set([...html.matchAll(/\bid="([^"]+)"/g)].map((m) => m[1]));
 }
 
-function makeCtx(calls) {
+// `texts` collects every string actually painted on the canvas, which is the
+// only way a test can read a score float — the effects list is host-private and
+// the renderer is a pure reader of it. What a popup SAYS is behaviour (WP-H
+// makes campaign floats speak 元), so it needs to be observable.
+function makeCtx(calls, texts) {
   const noop = () => {};
   const rec = (name) => () => calls.push(name);
+  const recText = () => (s) => { calls.push('text'); texts.push(String(s)); };
   return {
     canvas: null,
     globalAlpha: 1, fillStyle: '', strokeStyle: '', lineWidth: 1, lineCap: 'butt',
@@ -42,7 +47,7 @@ function makeCtx(calls) {
     quadraticCurveTo: noop, bezierCurveTo: noop, arc: noop, ellipse: noop, rect: noop,
     fillRect: rec('fill'), strokeRect: rec('stroke'),
     fill: rec('fill'), stroke: rec('stroke'),
-    fillText: rec('text'), strokeText: rec('text'),
+    fillText: recText(), strokeText: recText(),
     measureText: () => ({ width: 10 }),
     createRadialGradient: () => ({ addColorStop: noop }),
     createLinearGradient: () => ({ addColorStop: noop }),
@@ -68,6 +73,7 @@ class El {
     this.attrs = {};
     this.listeners = new Map();
     this.drawCalls = [];
+    this.drawnText = [];
     this._classes = new Set();
     this._text = '';
     this.width = 0;
@@ -166,7 +172,7 @@ class El {
   }
 
   getContext() {
-    if (!this._ctx) this._ctx = makeCtx(this.drawCalls);
+    if (!this._ctx) this._ctx = makeCtx(this.drawCalls, this.drawnText);
     return this._ctx;
   }
   getBoundingClientRect() {

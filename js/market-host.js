@@ -222,19 +222,26 @@ export function makeMarketHost({ canvas, router, save, getSettings, rng, loop, s
     let hudStale = false;
     let ended = null;
     for (const ev of g.events) {
+      // What this event was worth, in 元, or null for the events that are not
+      // worth anything. It is banked and shown from the SAME figure, so the sum
+      // of every float the player watched is the appraisal's Merges line by
+      // construction rather than by coincidence.
+      let paid = null;
       if (ev.type === 'drop') { sfx('drop', { level: ev.level }); hudStale = true; saveDirty = true; }
       else if (ev.type === 'merge') {
         sfx(ev.level === MAX_LEVEL ? 'watermelon' : 'merge', { level: ev.level });
         if (ev.chain > 1) sfx('chain', { chain: ev.chain });
-        runEarnings += mergeValue(ev.level, ev.chain);
+        paid = mergeValue(ev.level, ev.chain);
+        runEarnings += paid;
         hudStale = true; saveDirty = true;
       } else if (ev.type === 'annihilate') {
         sfx('annihilate');
-        runEarnings += annihilateValue(ev.chain);
+        paid = annihilateValue(ev.chain);
+        runEarnings += paid;
         hudStale = true; saveDirty = true;
       }
       else if (ev.type === 'gameover') { ended = ev.reason || 'toppled'; }
-      pushEvent(fx, ev, tNow, settings.reducedMotion);
+      pushEvent(fx, ev, tNow, settings.reducedMotion, paid == null ? null : `+${paid}元`);
     }
 
     const chain = deepestChain(g.events);

@@ -51,7 +51,14 @@ export function resetEffects(fx) {
 
 // Fold one drained game event into the effects list. `t` is the host clock
 // (the same one handed to the renderer as tMs).
-export function pushEvent(fx, ev, t, reducedMotion) {
+//
+// `value` is what the popup should SAY the merge was worth, supplied by the
+// host. Free play passes nothing and gets the arcade score it always got; the
+// campaign passes '+64元', because during a market day every reward on screen
+// should be money rather than a second number system to reconcile at the till.
+// It arrives as a finished string on purpose — the arithmetic behind it belongs
+// to js/economy.js, and this module has never done any.
+export function pushEvent(fx, ev, t, reducedMotion, value = null) {
   if (ev.type === 'merge') {
     if (!reducedMotion) {
       fx.pops.set(ev.id, t);
@@ -60,13 +67,14 @@ export function pushEvent(fx, ev, t, reducedMotion) {
       burst(fx, ev.x, ev.y, 6 + (ev.chain > 1 ? 4 : 2), [parent.color, parent.rind], t, FX.dropletMs, FX.dropletSpeed);
     }
     const chain = ev.chain || 1;
+    const head = value == null ? `+${ev.score}` : value;
     fx.floats.push({
       // clear of the newborn's face, and stacked upward per chain link so a
       // chain's worth of floats reads as a ladder instead of a smear
       x: ev.x,
       y: ev.y - radiusOf(ev.level) * 0.9 - (chain - 1) * 18,
       t0: t, life: FX.floatMs,
-      text: chain > 1 ? `+${ev.score} ×${chain}` : `+${ev.score}`,
+      text: chain > 1 ? `${head} ×${chain}` : head,
       scale: Math.min(1 + 0.18 * (chain - 1), 1.7),
       color: chain > 1 ? CHAIN_COLORS[Math.min(chain - 2, CHAIN_COLORS.length - 1)] : null,
     });
@@ -75,8 +83,9 @@ export function pushEvent(fx, ev, t, reducedMotion) {
       burst(fx, ev.x, ev.y, 20, ['#4f9e56', '#2f6e3c', '#d23c50'], t, FX.dropletMs * 1.6, FX.dropletSpeed * 1.5);
     }
     fx.floats.push({
+      // the biggest number the board can produce, so the most legible one
       x: ev.x, y: ev.y - radiusOf(MAX_LEVEL) * 0.6, t0: t, life: FX.floatMs * 1.4,
-      text: `+${ev.score}`, scale: 2.0, color: '#4f9e56', bold: true,
+      text: value == null ? `+${ev.score}` : value, scale: 2.0, color: '#4f9e56', bold: true,
     });
   } else if (ev.type === 'bounce') {
     if (reducedMotion) return;
