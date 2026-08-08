@@ -104,3 +104,61 @@ test('starting a run clears the last stall\'s mood along with its juice', () => 
   R.draw(g, settings, 100, fx);
   assert.equal(canvas.ctx.depth, 0, 'the renderer left the context unbalanced');
 });
+
+// ── letting the screen rest (GAME_INTEGRATION §6d) ─────────────────────────
+// The claim power saver makes on this renderer is exact: with the board
+// settled, every frame is the frame before it. That is what earns the host the
+// right to stop asking for frames at all — and it is checked here rather than
+// by naming the lanterns, the leaf and the blinks one at a time, because the
+// property is "nothing on this canvas depends on the clock", not "these three
+// things were remembered".
+//
+// Dark theme on purpose: it is the busiest the stall ever gets (the lanterns
+// only hang in the evening).
+function frameShapes(settings) {
+  const canvas = stubCanvas();
+  const R = makeRenderer(canvas);
+  const g = idleGame();
+  R.setPerch(FRIEND_LEVEL);
+  const shapes = [];
+  for (let t = 0; t < 30000; t += 250) {
+    const before = canvas.ctx.calls.length;
+    R.draw(g, settings, t);
+    shapes.push(canvas.ctx.calls.length - before);
+  }
+  return shapes;
+}
+
+test('under power saver a settled board draws the same frame at every moment', () => {
+  const saving = frameShapes({ theme: 'dark', fontScale: 1, reducedMotion: false, powerSaver: true });
+  assert.equal(new Set(saving).size, 1,
+    'something on the settled board was still keeping time under power saver');
+});
+
+test('…and with power saver off the stall is alive again', () => {
+  const alive = frameShapes({ theme: 'dark', fontScale: 1, reducedMotion: false, powerSaver: false });
+  assert.ok(new Set(alive).size > 1,
+    'the scenery stopped moving even with power saver off — the gate is too wide');
+});
+
+// The other half of §6d, and the half that is easy to get wrong: a state an
+// animation used to carry must still be legible once the animation is gone.
+// The friend is the visible case — present and neutral, never absent.
+test('power saver takes the friend\'s blink, never the friend', () => {
+  const canvas = stubCanvas();
+  const R = makeRenderer(canvas);
+  const g = idleGame();
+  const saving = { theme: 'light', fontScale: 1, reducedMotion: false, powerSaver: true };
+
+  const empty = paintCount(R, g, saving, 0, canvas.ctx);
+  R.setPerch(FRIEND_LEVEL);
+  assert.ok(paintCount(R, g, saving, 0, canvas.ctx) > empty, 'power saver took the friend away');
+});
+
+// The juice door, from the power-saver side. js/effects.js has always kept
+// decoration out and information in; power saver comes in through the same one.
+test('power saver is refused at the same door reduced motion is', () => {
+  const fx = makeEffects();
+  cheer(fx, 0, true);
+  assert.equal(fx.cheeredAt, null, 'a cheer got through a request to hold still');
+});

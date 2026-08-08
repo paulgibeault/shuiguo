@@ -14,6 +14,12 @@
 // Reduced motion is enforced at the door: pushEvent() simply refuses to create
 // anything that moves. Score floats survive as a static fade because they're
 // information, not decoration.
+//
+// POWER SAVER comes in the same door. The line this module has always drawn —
+// decoration refused, information kept — is exactly the line GAME_INTEGRATION
+// §6d asks a game to draw for the launcher's battery lever, so the flag the
+// hosts pass is now "hold still" rather than "reduced motion" specifically,
+// and either setting raises it. Nothing about what survives changes.
 
 import { FRUITS, MAX_LEVEL, radiusOf } from './constants.js';
 
@@ -58,8 +64,8 @@ export function resetEffects(fx) {
 // Somebody watching the board looks pleased for a moment. It lives here with
 // every other time-decaying visual — and behind the same door, so a face that
 // changes is one more thing reduced motion simply never sees.
-export function cheer(fx, t, reducedMotion) {
-  if (reducedMotion) return;
+export function cheer(fx, t, still) {
+  if (still) return;
   fx.cheeredAt = t;
 }
 
@@ -77,10 +83,10 @@ export function isCheering(fx, t) {
 // should be money rather than a second number system to reconcile at the till.
 // It arrives as a finished string on purpose — the arithmetic behind it belongs
 // to js/economy.js, and this module has never done any.
-export function pushEvent(fx, ev, t, reducedMotion, value = null) {
+export function pushEvent(fx, ev, t, still, value = null) {
   const paid = value == null ? `+${ev.score}` : value;
   if (ev.type === 'merge') {
-    if (!reducedMotion) {
+    if (!still) {
       fx.pops.set(ev.id, t);
       // droplets take the PARENT's colour — the juice of what was crushed
       const parent = FRUITS[ev.level - 2] || FRUITS[0];
@@ -98,7 +104,7 @@ export function pushEvent(fx, ev, t, reducedMotion, value = null) {
       color: chain > 1 ? CHAIN_COLORS[Math.min(chain - 2, CHAIN_COLORS.length - 1)] : null,
     });
   } else if (ev.type === 'annihilate') {
-    if (!reducedMotion) {
+    if (!still) {
       burst(fx, ev.x, ev.y, 20, ['#4f9e56', '#2f6e3c', '#d23c50'], t, FX.dropletMs * 1.6, FX.dropletSpeed * 1.5);
     }
     fx.floats.push({
@@ -107,9 +113,21 @@ export function pushEvent(fx, ev, t, reducedMotion, value = null) {
       text: paid, scale: 2.0, color: '#4f9e56', bold: true,
     });
   } else if (ev.type === 'bounce') {
-    if (reducedMotion) return;
+    if (still) return;
     fx.squashes.set(ev.id, { t0: t, speed: ev.speed });
   }
+}
+
+// Is there anything left on this list to draw? The hosts ask before they let
+// the render loop stop (GAME_INTEGRATION §6d): a board whose physics has
+// settled is still not idle while a droplet is in the air or a score float is
+// fading, and a loop that stopped under one would drop the other mid-flight.
+export function isQuiet(fx, t) {
+  return fx.droplets.length === 0
+    && fx.floats.length === 0
+    && fx.pops.size === 0
+    && fx.squashes.size === 0
+    && !isCheering(fx, t);
 }
 
 // Drop anything that has finished. Cheap enough to run every frame.

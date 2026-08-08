@@ -26,7 +26,14 @@ const CANCEL_ZONE = 0.75;
  *   game()          the game being driven right now, or null
  *   toWorldX(px)    that game's view transform
  *   onDropped(g)    optional, after a successful drop
+ *   onInput()       optional, the moment input reaches a live board
  * }
+ *
+ * `onInput` exists because under power saver a settled board stops rendering
+ * altogether (GAME_INTEGRATION §6d) — so the aim that moves the ghost and the
+ * release that drops the fruit both have to bring the loop back before they
+ * change anything. It fires for aiming as well as for dropping: sliding the
+ * dropper across a stopped board is a visible change with no event of its own.
  */
 export function bindInput(canvas, adapter) {
   let pointerDown = false;
@@ -38,6 +45,9 @@ export function bindInput(canvas, adapter) {
     const g = adapter.game();
     return g && g.state === 'playing' ? g : null;
   };
+
+  // Every handler below that is about to touch a live board calls this first.
+  const woke = () => { if (adapter.onInput) adapter.onInput(); };
 
   const tryDrop = (g) => {
     if (drop(g) && adapter.onDropped) adapter.onDropped(g);
@@ -58,6 +68,7 @@ export function bindInput(canvas, adapter) {
   canvas.addEventListener('pointerdown', (e) => {
     const g = active();
     if (!g) return;
+    woke();
     pointerDown = true;
     downY = e.clientY;
     canvas.setPointerCapture(e.pointerId);
@@ -68,6 +79,7 @@ export function bindInput(canvas, adapter) {
   canvas.addEventListener('pointermove', (e) => {
     const g = active();
     if (!pointerDown || !g) return;
+    woke();
     aim(g, adapter.toWorldX(e.clientX));
   });
 
@@ -76,6 +88,7 @@ export function bindInput(canvas, adapter) {
     pointerDown = false;
     const g = active();
     if (!g) return;
+    woke();
     if (isCancel(e)) return;          // aim is kept; nothing is dropped
     tryDrop(g);
   });
@@ -85,6 +98,7 @@ export function bindInput(canvas, adapter) {
   canvas.addEventListener('keydown', (e) => {
     const g = active();
     if (!g) return;
+    woke();
     const step = e.shiftKey ? 24 : 8;
     if (e.key === 'ArrowLeft')       { aim(g, g.dropX - step); e.preventDefault(); }
     else if (e.key === 'ArrowRight') { aim(g, g.dropX + step); e.preventDefault(); }

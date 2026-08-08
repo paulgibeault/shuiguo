@@ -102,6 +102,15 @@ export function makeRenderer(canvas) {
   function draw(g, settings, tMs, fx = EMPTY_FX) {
     const th = themeOf(settings);
     const motion = settings.reducedMotion ? 0 : 1;
+    // TWO LEVERS, NOT ONE. `motion` is reduced motion's blanket answer — may
+    // anything on this canvas move at all. `ambient` is the discretionary half
+    // of it: the lanterns' sway, the drifting leaf, the idle blinks, the
+    // deadline's pulse. Power saver puts that half out (GAME_INTEGRATION §6d)
+    // and leaves everything the board's own state is written in — a fruit's
+    // roll, the tremble before the line claims it, the vignette, a worried
+    // face — exactly where it was. Nothing that says something goes quiet;
+    // what goes quiet is the scenery.
+    const ambient = motion && !settings.powerSaver ? 1 : 0;
 
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     paintSky(ctx, th, canvas.width, canvas.height);
@@ -115,13 +124,13 @@ export function makeRenderer(canvas) {
     // world: a portrait viewport letterboxes the world vertically, and a band
     // of awning floating on the leftover sky read as a seam under the header.
     paintAwning(ctx, th, -offY / scale);
-    paintLanterns(ctx, th, tMs, motion);
-    paintLeaf(ctx, th, tMs, motion);
+    paintLanterns(ctx, th, tMs, ambient);
+    paintLeaf(ctx, th, tMs, ambient);
     // On the front apron below the counter — outside the field of play, so
     // never in the drop path and never something the pile can land on.
-    drawPerched(fx, tMs, settings.reducedMotion);
+    drawPerched(fx, tMs, !ambient);
 
-    drawDeadline(g, th, tMs, motion);
+    drawDeadline(g, th, tMs, ambient);
     if (g.state === 'playing' && g.current != null) drawGhost(g, th);
 
     // the pile — trembles as a whole once the line is about to claim it
@@ -132,7 +141,7 @@ export function makeRenderer(canvas) {
     for (const b of g.bodies) {
       const born = fx.pops.get(b.id);
       const sq = fx.squashes.get(b.id);
-      drawBody(b, tMs, motion, settings.reducedMotion, {
+      drawBody(b, tMs, motion, ambient, {
         scale: born != null ? popScale(born, tMs) : 1,
         squash: sq ? squashAmount(sq, tMs) : 0,
       });
@@ -167,15 +176,16 @@ export function makeRenderer(canvas) {
   // at the perch's scale, wearing an expression out of expressionFor's own
   // vocabulary — no second drawing of anything.
   //
-  // Under reduced motion they are simply present and neutral: expressionFor
-  // already refuses to blink, and js/effects.js refuses to record a cheer at
-  // all — a face that changes is motion however briefly it lasts, and it is
-  // turned away at the same door as everything else that moves.
-  function drawPerched(fx, tMs, reducedMotion) {
+  // With the ambient half off — reduced motion, or the launcher's power saver —
+  // they are simply present and neutral: expressionFor already refuses to
+  // blink, and js/effects.js refuses to record a cheer at all. A face that
+  // changes is motion however briefly it lasts, and it is turned away at the
+  // same door as everything else that is only there to be charming.
+  function drawPerched(fx, tMs, still) {
     if (perchLevel == null) return;
     perchOpts.expression = isCheering(fx, tMs)
       ? 'happy'
-      : expressionFor(PERCHED, tMs, reducedMotion);
+      : expressionFor(PERCHED, tMs, still);
     ctx.save();
     ctx.translate(PERCH.x, PERCH.y);
     paintFruit(ctx, perchLevel, PERCH_R, perchOpts);
@@ -187,7 +197,7 @@ export function makeRenderer(canvas) {
   // flattens against the floor rather than against the fruit's own spin. The
   // pre-translate anchors it to the fruit's bottom edge — scaling about the
   // centre would lift a squashed fruit off the very floor it just hit.
-  function drawBody(b, tMs, motion, reducedMotion, t) {
+  function drawBody(b, tMs, motion, ambient, t) {
     ctx.save();
     ctx.translate(b.x, b.y);
     const e = t.squash || 0;
@@ -197,8 +207,12 @@ export function makeRenderer(canvas) {
     }
     if (t.scale !== 1) ctx.scale(t.scale, t.scale);
     paintFruit(ctx, b.level, b.r, {
+      // The roll is the simulation showing its work, so it rides on `motion`.
+      // The blink is a fruit being cute at nobody, so it rides on `ambient` —
+      // 'worried' and 'happy' come out of expressionFor ahead of the blink
+      // either way, which is how the states keep reading with it off.
       angle: motion ? b.angle : 0,
-      expression: expressionFor(b, tMs, !motion),
+      expression: expressionFor(b, tMs, !ambient),
     });
     ctx.restore();
   }
@@ -244,10 +258,14 @@ export function makeRenderer(canvas) {
     return 0.45 + 0.55 * clamp01((100 - left) / 100);
   }
 
-  function drawDeadline(g, th, tMs, motion) {
+  function drawDeadline(g, th, tMs, ambient) {
     const danger = g.state === 'playing' && inDanger(g);
-    // pulses when a fruit is over the line; steady strong when reduced motion
-    const pulse = danger ? (motion ? 0.55 + 0.45 * Math.sin(tMs / 120) : 1) : 0.5;
+    // Pulses when a fruit is over the line. With the ambient half off — reduced
+    // motion, or power saver — it holds at full strength instead of going out:
+    // the pulse is emphasis, but the LINE is the state, and §6d's rule is that
+    // what an animation was saying must still be legible once it settles. The
+    // thicker stroke says it too, and says it in both cases.
+    const pulse = danger ? (ambient ? 0.55 + 0.45 * Math.sin(tMs / 120) : 1) : 0.5;
     ctx.globalAlpha = pulse;
     ctx.strokeStyle = th.deadline;
     ctx.lineWidth = danger ? 3 : 2;
