@@ -948,8 +948,19 @@ button.big {
 /* Beat one of the opening: the gift crate pulses in its dock. Nothing to read,
  * nothing to dismiss — the only moving thing on screen is the thing to use, and
  * it stops the moment it is used. The SDK's base stylesheet collapses
- * animations under reduced motion, so this simply sits still there. */
-.crate-strip.pulse .crate-chip { animation: crate-pulse 1.6s ease-in-out infinite; }
+ * animations under reduced motion, so this simply sits still there.
+ *
+ * It pulses a COUNTED number of times, not forever (GAME_INTEGRATION §6d): an
+ * infinite animation is a rAF loop that never stops, and this one sits on a
+ * screen the player is meant to stop and read. The launcher owns the count —
+ * three normally, one under power saver — and the `var()` fallback keeps it at
+ * three on any SDK that has never heard of the token.
+ *
+ * What the motion said, the ring below goes on saying for free. */
+.crate-strip.pulse .crate-chip {
+  animation: crate-pulse 1.6s ease-in-out;
+  animation-iteration-count: var(--arcade-pulse-count, 3);
+}
 .crate-strip.pulse .crate-chip:nth-child(2) { animation-delay: 0.12s; }
 .crate-strip.pulse .crate-chip:nth-child(3) { animation-delay: 0.24s; }
 .crate-strip.pulse .crate-chip:nth-child(4) { animation-delay: 0.36s; }
@@ -959,3 +970,18 @@ button.big {
   0%, 100% { transform: none; }
   50% { transform: translateY(-0.14rem) scale(1.06); }
 }
+
+/* The resting treatment the pulse settles into — and the ONLY thing that says
+ * "this crate is the thing to use" once the bouncing has been spent, under
+ * power saver (one pulse), and under reduced motion (one instant frame, which
+ * is to say none). It is static, so it costs no frames at all: the dock wears
+ * the accent it is otherwise merely outlined in, and the counts under the
+ * fruit come up to full strength. The pulse points; this holds the point.
+ *
+ * On the dock rather than on the strip because the strip is masked and clipped
+ * — a ring drawn on it would be cut off at both ends. */
+.crate-dock:has(.crate-strip.pulse) {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 30%, transparent), 0 2px 8px var(--shadow);
+}
+.crate-strip.pulse .crate-chip figcaption { opacity: 1; }

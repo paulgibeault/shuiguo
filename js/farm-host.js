@@ -104,7 +104,14 @@ export function makeFarmHost({ canvas, save, getSettings, wallNow, loop, rng, on
     const c = save.get();
     const settings = getSettings();
     const th = farmThemeOf(settings);
-    const motion = settings.reducedMotion ? 0 : 1;
+    // Reduced motion stops everything on the mountain; the launcher's power
+    // saver stops the same half of it, and for the same reason one screen down
+    // (GAME_INTEGRATION §6d). Both land on the vocabulary every painter here
+    // already speaks: what carries information holds still at full strength —
+    // the glint over a ripe crop, the 种 over ground you can plant — and what
+    // is pure decoration is simply gone, because a still firefly is worse than
+    // no firefly. Nothing on this screen has to be watched to be read.
+    const motion = settings.reducedMotion || settings.powerSaver ? 0 : 1;
     const owned = c.farm ? c.farm.terraces.length : 0;
 
     ctx.setTransform(1, 0, 0, 1, 0, 0);

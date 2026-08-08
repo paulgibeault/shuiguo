@@ -60,3 +60,24 @@ test('gameId is consistent across manifest, sw, and index.html', () => {
   assert.match(index, /src="\/arcade-sdk\.js"/, 'evergreen SDK alias');
   assert.match(index, /scope: '\/shuiguo\/'/);
 });
+
+// GAME_INTEGRATION §6d, as a source gate. An infinite CSS animation is a rAF
+// loop that never stops, expressed declaratively — it is the one way a game
+// that is doing everything else right still keeps the compositor awake on a
+// screen nobody is touching. There is no `infinite` in this stylesheet, and
+// the one looping effect that used to be reads its budget off the launcher's
+// token instead, with a `var()` fallback so it never depends on the SDK
+// having shipped it.
+test('style.css has no infinite animation, and the pulse takes the launcher\'s count', () => {
+  const raw = fs.readFileSync(path.join(ROOT, 'style.css'), 'utf8');
+  // Declarations only — the comment above the pulse explains the rule, and a
+  // gate that cannot tell an explanation from a violation is not a gate.
+  const css = raw.replace(/\/\*[\s\S]*?\*\//g, '');
+  assert.doesNotMatch(css, /animation[^;{}]*\binfinite\b/,
+    'an infinite animation is back — see GAME_INTEGRATION §6d');
+  assert.match(css, /animation-iteration-count:\s*var\(--arcade-pulse-count,\s*3\)/,
+    'the crate pulse stopped reading --arcade-pulse-count (or lost its fallback)');
+  // …and a counted pulse is only safe if what it was saying survives it.
+  assert.match(css, /\.crate-dock:has\(\.crate-strip\.pulse\)/,
+    'the gift crate has no static resting treatment to settle into');
+});

@@ -1077,6 +1077,56 @@ test('suspending anywhere loses nothing and stops every loop', async () => {
   assert.equal(screen($), 'farm', 'resuming moved the player');
 });
 
+// ── letting the screen rest (GAME_INTEGRATION §6d) ─────────────────────────
+// Power saver's claim is not "fewer effects", it is that a game the player is
+// looking at and not touching stops asking the display for frames at all. On
+// this board that means: settle, stop; touch it, start.
+
+const EMPTY_BOARD = { v: 1, score: 0, current: 3, next: 2, fruits: [], rngState: 7 };
+
+test('power saver stops a settled board drawing, and a touch starts it again', async () => {
+  const { $, arcade } = await bootGame({ state: { save: EMPTY_BOARD }, settings: { powerSaver: true } });
+  assert.equal(screen($), 'game');
+  arcade.tick(1);
+  assert.ok(!arcade.loops.some((l) => l.running),
+    'a settled board went on asking for frames under power saver');
+
+  $('board').fire('pointerdown', { clientX: 100, clientY: 300 });
+  assert.ok(arcade.loops.some((l) => l.running), 'touching the board did not wake it');
+  $('board').fire('pointerup', { clientX: 100, clientY: 300 });
+  arcade.tick(4);
+  assert.equal($('score').textContent, '0');   // dropped, nothing merged yet
+  assert.ok(arcade.loops.some((l) => l.running), 'the fruit was dropped onto a stopped board');
+});
+
+// The lever is the launcher's, not the game's: with power saver off, the stall
+// keeps its scenery and keeps its frames. This is also the pre-3.13 SDK case —
+// tests/fake-dom only grows powerSaver() when a test asks for it, so this one
+// boots against an SDK that has never heard of the setting and must neither
+// throw nor quietly park the loop.
+test('without power saver the board keeps drawing, on any SDK', async () => {
+  const { arcade } = await bootGame({ state: { save: EMPTY_BOARD } });
+  arcade.tick(30);
+  assert.ok(arcade.loops.some((l) => l.running), 'the board stopped drawing without being asked to');
+  arcade.fire('settings');    // the unguarded read would throw here, every time
+  arcade.tick(1);
+  assert.ok(arcade.loops.some((l) => l.running), 'a settings change parked the loop');
+});
+
+test('the market day rests too, and packing up still lands the appraisal', async () => {
+  const { $, arcade } = await bootGame({ settings: { powerSaver: true } });
+  $('play-campaign').fire('click');           // the gift run
+  assert.equal(screen($), 'market');
+  arcade.tick(1);
+  assert.ok(!arcade.loops.some((l) => l.running), 'the market board kept asking for frames');
+
+  // The gameover event is drained by the loop, so a run that ends on a stopped
+  // board has to wake it — otherwise Pack up does nothing at all.
+  $('pack-up').fire('click');
+  arcade.tick(1);
+  assert.equal(screen($), 'appraisal', 'a stopped loop never saw the day end');
+});
+
 test('a settings change repaints whatever is on screen, on every screen', async () => {
   const { $, arcade } = await bootGame();
   for (const go of [

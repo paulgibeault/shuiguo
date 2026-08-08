@@ -18,7 +18,7 @@ import {
   isSoldOut, isSettled,
 } from './game.js';
 import { makeRenderer } from './render.js';
-import { makeEffects, pushEvent, pruneEffects, resetEffects } from './effects.js';
+import { makeEffects, pushEvent, pruneEffects, resetEffects, isQuiet } from './effects.js';
 import { deepestChain } from './progress.js';
 import {
   drawFromCrate, crateSize, levelsIn, countOf, makeRunTally, noteMerges, rollSeedDrip,
@@ -62,6 +62,22 @@ export function makeMarketHost({ canvas, router, save, getSettings, rng, loop, s
   let soldOutAt = null;
   let wasInDanger = false;
   let live = false;
+  // Free play's discipline, on the market's own board (js/main.js §the loop):
+  // under power saver the loop stops itself once nothing is left to move, so
+  // it is started and stopped through wake()/rest() and anything that can move
+  // the board again wakes it. loop.start() resets the frame clock, so calling
+  // it twice in a row would hand the physics a delta of 0.
+  let looping = false;
+
+  function wake() { if (!looping) { looping = true; loop.start(); } }
+  function rest() { if (looping) { looping = false; loop.stop(); } }
+
+  // Physics at rest, the dropper off cooldown, nothing over the line, no juice
+  // still fading — GAME_INTEGRATION §6d's "visible but idle", exactly.
+  function boardIsIdle(tNow) {
+    return !!g && g.state === 'playing' && g.canDrop
+      && isSettled(g) && !inDanger(g) && isQuiet(fx, tNow);
+  }
 
   // ── the crate-backed dropper ───────────────────────────────────────────
   // One draw function for the life of the host; it reads whatever crate the
@@ -230,7 +246,8 @@ export function makeMarketHost({ canvas, router, save, getSettings, rng, loop, s
         hudStale = true; saveDirty = true;
       }
       else if (ev.type === 'gameover') { ended = ev.reason || 'toppled'; }
-      pushEvent(fx, ev, tNow, settings.reducedMotion, paid == null ? null : `+${paid}元`);
+      pushEvent(fx, ev, tNow, settings.reducedMotion || settings.powerSaver,
+        paid == null ? null : `+${paid}元`);
     }
 
     const chain = deepestChain(g.events);
@@ -265,13 +282,18 @@ export function makeMarketHost({ canvas, router, save, getSettings, rng, loop, s
 
     pruneEffects(fx, tNow);
     R.draw(g, settings, tNow, fx);
+
+    // Nothing left moving on the stall: this frame drew the settled board and
+    // the next would draw it again unchanged. Under power saver that is where
+    // the frames stop (§6d) until something wakes them.
+    if (settings.powerSaver && boardIsIdle(tNow)) rest();
   }
 
   // ── the appraisal ──────────────────────────────────────────────────────
 
   function closeStall(reason) {
     live = false;
-    loop.stop();
+    rest();
     if (saveTimer) { saveTimer.cancel(); saveTimer = null; }
     save.clearMarket();
 
@@ -398,13 +420,13 @@ export function makeMarketHost({ canvas, router, save, getSettings, rng, loop, s
     live = true;
     R.resize();
     refreshHud();
-    loop.start();
+    wake();
     canvas.focus();
   }
 
   function exit() {
     live = false;
-    loop.stop();
+    rest();
     if (saveDirty) flushBoard();
     if (saveTimer) { saveTimer.cancel(); saveTimer = null; }
   }
@@ -423,10 +445,16 @@ export function makeMarketHost({ canvas, router, save, getSettings, rng, loop, s
     flush: () => { if (saveDirty) flushBoard(); },
     isLive: () => live,
     setHooks(h) { onChain = h.onChain || onChain; onUnlock = h.onUnlock || onUnlock; },
-    finishRun: (reason) => { if (g && g.state === 'playing') finish(g, reason); },
+    // Each of these changes the board, so each has to be sure there is a frame
+    // coming to notice — the gameover event in particular is drained by the
+    // loop, and a stopped loop would never see the run end. `rest` is the
+    // other half: the boot wiring parks every loop on suspend, and parking
+    // this one behind the host's back would leave it unable to wake again.
+    wake, rest,
+    finishRun: (reason) => { if (g && g.state === 'playing') { wake(); finish(g, reason); } },
     hasResumableRun: () => !!save.readMarket(),
     done: () => onDone && onDone(),
-    aimAt: (x) => g && aim(g, x),
-    dropAt: (x) => g && drop(g, x),
+    aimAt: (x) => { if (g) { wake(); aim(g, x); } },
+    dropAt: (x) => { if (!g) return false; wake(); return drop(g, x); },
   };
 }

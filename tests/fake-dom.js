@@ -256,6 +256,13 @@ export function makeArcade({ state = {}, stats = {}, records = {}, settings = {}
       theme: () => settings.theme || 'light',
       fontScale: () => settings.fontScale || 1,
       reducedMotion: () => !!settings.reducedMotion,
+      // powerSaver() arrived in SDK 3.13.0, and this stub only grows it when a
+      // test asks for it BY NAME. That is deliberate: every other test in the
+      // suite then boots against a pre-3.13 shaped SDK, which is what keeps
+      // js/main.js §pullSettings honest about guarding the read — an
+      // unguarded call would throw on boot and on every settings change, and
+      // 300-odd tests would say so at once.
+      ...('powerSaver' in settings ? { powerSaver: () => !!settings.powerSaver } : {}),
     },
     session: {
       setTimeout(fn, ms) {

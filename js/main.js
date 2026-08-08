@@ -23,7 +23,7 @@ import {
 } from './game.js';
 import { makeRenderer } from './render.js';
 import { bindInput } from './input.js';
-import { makeEffects, pushEvent, pruneEffects, resetEffects, cheer } from './effects.js';
+import { makeEffects, pushEvent, pruneEffects, resetEffects, cheer, isQuiet } from './effects.js';
 import {
   readDiscovered, packDiscovered, newDiscoveries, deepestChain, isDiscoverable,
 } from './progress.js';
@@ -136,15 +136,27 @@ setStall(stall);
 // Visual-only, host-owned, never saved — see js/effects.js.
 const fx = makeEffects();
 
-// ── settings snapshot (theme/fontScale/reducedMotion re-render live) ───────
-let settings = { theme: 'light', fontScale: 1, reducedMotion: false };
+// ── settings snapshot (theme/fontScale/reducedMotion/powerSaver re-render) ──
+let settings = { theme: 'light', fontScale: 1, reducedMotion: false, powerSaver: false };
 function pullSettings() {
   settings = {
     theme: Arcade.settings.theme(),
     fontScale: Arcade.settings.fontScale(),
     reducedMotion: Arcade.settings.reducedMotion(),
+    // GUARDED, and it has to be. `powerSaver()` arrived in SDK 3.13.0; on
+    // anything older the property is undefined and calling it throws — and
+    // this runs inside onSettingsChange, so that would be a throw on every
+    // settings write the launcher makes, not merely a bad boot. An older SDK
+    // reads as "not saving", which is exactly what it was doing before.
+    powerSaver: Arcade.settings.powerSaver ? Arcade.settings.powerSaver() : false,
   };
 }
+
+// One question, asked in three places: is the game meant to be holding still?
+// Reduced motion and power saver want the same thing of the juice layer — no
+// decoration created — and js/effects.js has always drawn that line in the
+// right place (see its header).
+const still = () => settings.reducedMotion || settings.powerSaver;
 
 // ── HUD ────────────────────────────────────────────────────────────────────
 
@@ -437,7 +449,7 @@ function beginGame(resumed, who, stock = null) {
   soldOutAt = null;
   show('game');
   refreshHud();
-  loop.start();
+  wake();
   canvas.focus();
 }
 
@@ -510,7 +522,7 @@ function endGame(reason = 'toppled') {
   });
   Arcade.state.remove(SAVE_KEY);
   saveDirty = false;
-  loop.stop();
+  rest();
 }
 
 // ── the game-over summary ──────────────────────────────────────────────────
@@ -684,8 +696,29 @@ function flushSave() {
 }
 
 // ── the loop ───────────────────────────────────────────────────────────────
+// Started and stopped through wake()/rest() rather than directly, because
+// under power saver the loop also stops ITSELF the moment the board has
+// nothing left to move (GAME_INTEGRATION §6d: a visible-but-idle game must let
+// the display pipeline reach 0 fps). Anything that can make the board move
+// again — a drag, a drop, a resize, a settings change, coming back from
+// suspend — has to wake it, and wake() is a no-op when it is already awake:
+// loop.start() resets the frame clock, and calling it on every pointermove
+// would hand the physics a delta of 0 for as long as the finger moved.
 const FIXED = 1 / 60 / PHYS.substeps;
 let acc = 0;
+let looping = false;
+
+function wake() { if (!looping) { looping = true; loop.start(); } }
+function rest() { if (looping) { looping = false; loop.stop(); } }
+
+// Is there anything left for a frame to do? Physics at rest, the dropper off
+// cooldown, nothing over the line (the pulse, the tremble and the vignette all
+// live there), and no juice still fading. The ambient scenery — the sway, the
+// leaf, the blinks — is deliberately NOT asked about: it only runs when power
+// saver is off, and this check only runs when it is on.
+function boardIsIdle(tNow) {
+  return g.state === 'playing' && g.canDrop && isSettled(g) && !inDanger(g) && isQuiet(fx, tNow);
+}
 
 const loop = Arcade.loop((deltaMs) => {
   if (!router.is('game')) return;
@@ -712,14 +745,14 @@ const loop = Arcade.loop((deltaMs) => {
     // Toppling is the pile getting away from you; the other two are the stall
     // being put away, and they get the market's own contented little cue.
     else if (ev.type === 'gameover') { sfx(ev.reason === 'toppled' ? 'game-over' : 'pack-up'); }
-    pushEvent(fx, ev, tNow, settings.reducedMotion);
+    pushEvent(fx, ev, tNow, still());
   }
 
   // A chain that finished this batch, and any fruit made here for the first
   // time ever. Both are read from the batch as a whole (js/progress.js), which
   // is why they live outside the per-event loop.
   const chain = deepestChain(g.events);
-  if (chain >= 3) { showChainBanner(chain); cheer(fx, tNow, settings.reducedMotion); }
+  if (chain >= 3) { showChainBanner(chain); cheer(fx, tNow, still()); }
   const found = newDiscoveries(discovered, g.events);
   if (found.length) { commitDiscovered(found); queueDiscoveryCards(found); }
 
@@ -753,6 +786,12 @@ const loop = Arcade.loop((deltaMs) => {
 
   pruneEffects(fx, tNow);
   R.draw(g, settings, tNow, fx);
+
+  // The stall is open and nothing in it is moving. Under power saver that is
+  // where the frames stop: this frame has already drawn the settled board, and
+  // the next one would draw the same pixels again for as long as the player
+  // sat looking at it. Anything that can change it calls wake().
+  if (settings.powerSaver && boardIsIdle(tNow)) rest();
 });
 let saveTimer = null;
 
@@ -765,15 +804,15 @@ Arcade.onSuspend(() => {
   if (router.is('game') && g.state === 'playing') flushSave();  // synchronous: the grace window
   if (router.is('market')) market.flush();
   campaignSave.flushIfDirty();
-  loop.stop();
+  rest();
   farmLoop.stop();
-  marketLoop.stop();
+  market.rest();
 });
 
 Arcade.onResume(() => {
-  if (router.is('game')) { if (g.state === 'playing') loop.start(); else loop.kick(); }
+  if (router.is('game')) { if (g.state === 'playing') wake(); else loop.kick(); }
   else if (router.is('farm')) { farm.enter(); }
-  else if (router.is('market')) { marketLoop.start(); }
+  else if (router.is('market')) { market.wake(); }
 });
 
 Arcade.onSettingsChange(() => {
@@ -788,14 +827,21 @@ Arcade.onSettingsChange(() => {
   if (router.is('game')) refreshHud();
   if (router.is('market')) market.refreshHud();
   if (router.is('farm')) farm.refresh();
+  // Power saver may have just been turned OFF, and the scenery it stopped has
+  // to start again — the board it was stopped on is settled by definition, so
+  // nothing else was ever going to ask for a frame. Waking a board that is
+  // still saving costs one frame: the loop looks, finds nothing moving, and
+  // puts itself straight back down.
+  if (router.is('game') && g.state === 'playing') wake();
+  if (router.is('market')) market.wake();
   applyResize();
 });
 
 Arcade.onStateReplaced(() => {
   // Treat like a fresh boot: recompute everything from storage, both modes.
-  loop.stop();
+  rest();
   farmLoop.stop();
-  marketLoop.stop();
+  market.rest();
   campaignSave.reload();
   bootFromState();
 });
@@ -1233,12 +1279,16 @@ $('appraisal-done').addEventListener('click', () => {
 bindInput(canvas, {
   game: () => (router.is('game') ? g : router.is('market') ? market.game() : null),
   toWorldX: (px) => R.toWorldX(px),
+  // Under power saver a settled board has stopped drawing, so touching it has
+  // to bring its loop back before anything moves (§6d). Whichever host owns
+  // the canvas right now is the one that has to wake.
+  onInput: () => { if (router.is('game')) wake(); else if (router.is('market')) market.wake(); },
 });
 
 // ── the stall's own buttons ────────────────────────────────────────────────
 // Packing up is the deliberate ending, and it is the smart one: it earns the
 // Tidy Stall on the friend's split, exactly as it does on a market day.
-$('stall-pack-up').addEventListener('click', () => { sfx('menu-click'); finish(g, 'packed'); });
+$('stall-pack-up').addEventListener('click', () => { sfx('menu-click'); wake(); finish(g, 'packed'); });
 // Again 再来 is the same stall with a fresh morning behind it — a crate is a
 // day's picking, and yesterday's is sold. While that friend is picking the next
 // one there is no morning to hand over, so the same button goes to the map,
@@ -1303,7 +1353,7 @@ function bootFromState() {
     wasInDanger = inDanger(g);       // already over the line ⇒ already creaked
     show('game');
     refreshHud();
-    loop.start();
+    wake();
     return;
   }
 
