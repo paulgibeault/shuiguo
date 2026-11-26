@@ -15,6 +15,26 @@ import assert from 'node:assert/strict';
 import { bootGame } from './fake-dom.js';
 import { TUNING, RULES, FRIENDS, WHOLESALER, MAX_LEVEL, scoreOf } from '../js/constants.js';
 import { evaluateFarm, eachPlot, isRipe, harvest } from '../js/farm.js';
+import { tileGeom, forSaleBox, scrollToTerrace, maxScroll } from '../js/farm-layout.js';
+
+// The farm is a tall world the canvas scrolls over. The fake canvas is 360×560
+// CSS px at a dpr of 1, which the farm fits at one world unit to the pixel, and
+// a fresh visit frames the highest terrace owned — so a world point is on
+// screen at its x, and at its y less that scroll.
+function farmScroll(owned = 1) {
+  return Math.min(maxScroll(560), Math.max(0, scrollToTerrace(owned - 1, 560)));
+}
+function tapWorld($, x, y, owned = 1) {
+  $('board').fire('pointerup', { clientX: x, clientY: y - farmScroll(owned) });
+}
+function tapTile($, ti, col, owned = 1) {
+  const t = tileGeom(ti, col);
+  tapWorld($, t.cx, t.groundY - 10, owned);
+}
+function tapSign($, i = 0, owned = 1) {
+  const b = forSaleBox(i);
+  tapWorld($, b.x + b.w / 2, b.y + b.h / 2, owned);
+}
 import { mergeValue, chainMultiplier, friendCut } from '../js/economy.js';
 import { multiplier } from '../js/format.js';
 import { QUEUE_DEPTH } from '../js/game.js';
@@ -803,7 +823,7 @@ function quietFarm() {
   buyFarm(c, Date.now() - 30 * 60 * 1000);   // long enough that it all came ripe
   const now = Date.now();
   evaluateFarm(c.farm, now);
-  for (const { ti, pi, plot } of eachPlot(c.farm)) if (isRipe(plot)) harvest(c.farm, ti, pi, now);
+  for (const { ti, col, plot } of eachPlot(c.farm)) if (isRipe(plot)) harvest(c.farm, ti, col, now);
   c.crate = Object.create(null);             // …and the harvest was sold at market
   return packCampaign(c);
 }
@@ -910,7 +930,7 @@ test('tapping the 出售 sign buys the farm, and the farm arrives planted', asyn
   arcade.tick(1);
 
   // the sign hangs over the bottom terrace; tap it, then take the offer
-  $('board').fire('pointerup', { clientX: 180, clientY: 505 });
+  tapSign($);
   assert.equal($('plot').hidden, false, 'the for-sale sheet never opened');
   const buy = $('plot-rows').children[0];
   assert.equal(buy.disabled, false, 'the floored first run could not afford the farm it was floored for');
@@ -989,9 +1009,9 @@ test('a seed card is painted the moment its own sheet opens, in either sheet', a
   assertPainted([...$('shop-seeds').children].filter((x) => !x.classList.contains('locked')), 'the shop');
   $('shop-close').fire('click');
 
-  // the starter terrace's last bed is bare, and tapping bare earth is the one
+  // the starter terrace's last tile is bare, and tapping bare earth is the
   // tap on the farm that opens a picker
-  $('board').fire('pointerup', { clientX: 311, clientY: 536 });
+  tapTile($, 0, TUNING.tilesPerTerrace - 1);
   assert.equal($('plot').hidden, false, 'tapping bare earth opened nothing');
   assertPainted([...$('plot-seeds').children], 'the plot picker');
 });
@@ -1036,7 +1056,7 @@ test('the farm keeps a quiet record, and shows none of it before there is one', 
   $('pack-up').fire('click');
   arcade.tick(1);
   $('appraisal-done').fire('click');
-  $('board').fire('pointerup', { clientX: 180, clientY: 505 });
+  tapSign($);
   $('plot-rows').children[0].fire('click');     // buy the farm, so the shop opens
   $('to-shop').fire('click');
 
@@ -1049,13 +1069,14 @@ test('tapping a bare bed opens the picker; tapping a thirsty plant waters it out
   const { $, arcade } = await farmedGame();
   arcade.tick(1);
 
-  // the starter cherry is in the bench of the bottom terrace, and it is thirsty
+  // the starter cherry stands mid-shelf on the bottom terrace, and it is thirsty
   const before = arcade.state.get('campaign');
-  $('board').fire('pointerup', { clientX: 44, clientY: 536 });
+  tapTile($, 0, TUNING.starterTreeCol);
   assert.equal($('plot').hidden, true, 'watering asked a question instead of just watering');
   arcade.fire('suspend');
   const after = arcade.state.get('campaign');
-  assert.ok(after.farm.terraces[0].plots[0].wateredUntilMs > 0, 'the tap did not water the tree');
+  const tree = after.farm.terraces[0].plots.find((p) => p.kind === 'tree');
+  assert.ok(tree.wateredUntilMs > 0, 'the tap did not water the tree');
   assert.notEqual(before, after);
 });
 
@@ -1069,7 +1090,7 @@ test('suspending anywhere loses nothing and stops every loop', async () => {
   // nothing happened, so nothing was written — a quiet screen is not a save
   assert.ok(!arcade.writes.includes(CAMPAIGN_KEY), 'an idle farm wrote a save for no reason');
 
-  $('board').fire('pointerup', { clientX: 44, clientY: 536 });   // water the tree
+  tapTile($, 0, TUNING.starterTreeCol);   // water the tree
   arcade.fire('suspend');
   assert.ok(arcade.writes.includes(CAMPAIGN_KEY), 'a watered plot did not survive a suspend');
 
@@ -1270,7 +1291,7 @@ test('beat two is simply skipped under reduced motion', async () => {
   $('play-campaign').fire('click');
   arcade.tick(2);
   // the sign is tappable straight away rather than sliding into place first
-  $('board').fire('pointerup', { clientX: 180, clientY: 505 });
+  tapSign($);
   assert.equal($('plot').hidden, false, 'the for-sale sign was out of reach');
 });
 
@@ -1282,7 +1303,7 @@ test('beat three: buying the farm plays the one card the campaign has', async ()
   arcade.tick(1);
   assert.equal($('cards').children.length, 0);
 
-  $('board').fire('pointerup', { clientX: 180, clientY: 505 });
+  tapSign($);
   $('plot-rows').children[0].fire('click');
   assert.equal($('cards').children.length, 1, 'the farm changed hands without a word');
   const card = $('cards').children[0];
@@ -1301,7 +1322,7 @@ test('the opening says its three things, one card per beat, in order', async () 
     $('pack-up').fire('click');
     arcade.tick(1);
     $('appraisal-done').fire('click');           // beat two: the farm is for sale
-    $('board').fire('pointerup', { clientX: 180, clientY: 505 });
+    tapSign($);
     $('plot-rows').children[0].fire('click');    // beat three: it is yours
   });
 
@@ -1323,7 +1344,7 @@ test('the campaign never puts more than a handful of words on screen at once', a
     $('pack-up').fire('click');
     arcade.tick(1);
     $('appraisal-done').fire('click');
-    $('board').fire('pointerup', { clientX: 180, clientY: 505 });
+    tapSign($);
     $('plot-rows').children[0].fire('click');
   });
 

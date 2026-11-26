@@ -19,7 +19,7 @@
 //   PLANT a level is earned only by merging one in a campaign run — otherwise a
 //   single lucky free-play game would skip the whole progression.
 
-import { TUNING, PINEAPPLE_LEVEL } from './constants.js';
+import { TUNING, PINEAPPLE_LEVEL, STRUCTURE_KINDS, isStructure } from './constants.js';
 import { isDiscoverable } from './progress.js';
 import {
   makeStarterFarm, msUntilNextRipe, serialize as serializeFarm, restore as restoreFarm,
@@ -35,7 +35,11 @@ import {
 // they stay part of its surface.
 export { countOf, totalCount, levelsIn, drawFromCrate } from './counts.js';
 
-const SAVE_VERSION = 1;
+import {
+  xpOfHarvest, rankOf, xpForRank, rankForSeed, rankForTerrace, rankForStructure, rankForEquipment,
+} from './rank.js';
+
+const SAVE_VERSION = 2;
 
 // The cherry is the one seed nobody has to earn: it is what the starter farm is
 // planted with, and merging is how every other level is unlocked.
@@ -58,7 +62,15 @@ export function makeCampaign() {
     crate,
     farm: null,
     firstRunDone: false,
+    xp: 0,                       // farm experience: face value of everything harvested
+    kit: emptyKit(),             // structures bought and not standing anywhere: kind → n
   };
+}
+
+function emptyKit() {
+  const kit = Object.create(null);
+  for (const kind of STRUCTURE_KINDS) kit[kind] = 0;
+  return kit;
 }
 
 // ── the till ───────────────────────────────────────────────────────────────
@@ -92,6 +104,71 @@ export function unlockedLevels(c) {
   return [...c.unlocked].filter(isLevel).sort((a, b) => a - b);
 }
 
+// ── rank ───────────────────────────────────────────────────────────────────
+//
+// Experience is earned by harvesting and nothing else (js/rank.js). The host
+// asks for the rank by asking for the campaign's, so nothing outside this
+// module and rank.js knows the two are related by a table.
+
+export function rankOfCampaign(c) { return rankOf(c.xp); }
+
+// Bank experience; returns { from, to } ranks so the host can celebrate a
+// rank-up without recomputing anything.
+export function addXp(c, n) {
+  const from = rankOf(c.xp);
+  if (Number.isFinite(n) && n > 0) c.xp += Math.floor(n);
+  return { from, to: rankOf(c.xp) };
+}
+
+// Why the shop will not sell this seed yet — 'merge' (never merged one at
+// market, so the player has not met the fruit), 'rank' (met, but the farm is
+// not experienced enough yet), or null when it is on sale. Merging comes first
+// because it is the older, more fundamental gate: it is what ties the market
+// to the farm at all.
+export function seedLock(c, level) {
+  if (!isUnlocked(c, level)) return 'merge';
+  if (rankOfCampaign(c) < rankForSeed(level)) return 'rank';
+  return null;
+}
+
+export function terraceLock(c, index) {
+  return rankOfCampaign(c) < rankForTerrace(index) ? 'rank' : null;
+}
+
+export function structureLock(c, kind) {
+  return rankOfCampaign(c) < rankForStructure(kind) ? 'rank' : null;
+}
+
+export function equipmentLock(c, what) {
+  return rankOfCampaign(c) < rankForEquipment(what) ? 'rank' : null;
+}
+
+// ── the kit ────────────────────────────────────────────────────────────────
+// Ponds, beehives and compost heaps that are bought but not standing anywhere.
+// Placing one takes it out; digging one up puts it back. Nothing is consumed.
+
+export function kitCount(c, kind) { return isStructure(kind) ? (c.kit[kind] || 0) : 0; }
+export function addKit(c, kind, n = 1) {
+  if (!isStructure(kind) || !Number.isInteger(n) || n <= 0) return false;
+  c.kit[kind] = (c.kit[kind] || 0) + n;
+  return true;
+}
+export function takeKit(c, kind) {
+  if (kitCount(c, kind) <= 0) return false;
+  c.kit[kind] -= 1;
+  return true;
+}
+
+// Something dug up off the farm, back where it came from: a plant's seed or
+// sapling into the seed drawer, a structure into the kit. Returns what went
+// back, as the level or kind, or null for nothing.
+export function returnDug(c, dug) {
+  if (!dug) return null;
+  if (isStructure(dug.kind)) return addKit(c, dug.kind, 1) ? dug.kind : null;
+  if (isLevel(dug.level)) return addSeeds(c, dug.level, 1) ? dug.level : null;
+  return null;
+}
+
 // ── the crate ──────────────────────────────────────────────────────────────
 //
 // MVP crate: everything harvested and not yet dropped. Choosing what to pack is
@@ -107,6 +184,8 @@ export function harvestInto(c, picked, rng) {
     return null;
   }
   addCount(c.crate, picked.level, picked.count);
+  const xp = xpOfHarvest(picked.level, picked.count);
+  const ranks = addXp(c, xp);
   let bonusSeed = null;
   if (picked.level === PINEAPPLE_LEVEL && rng) {
     const choices = unlockedLevels(c);
@@ -115,7 +194,7 @@ export function harvestInto(c, picked, rng) {
       addSeeds(c, bonusSeed, 1);
     }
   }
-  return { level: picked.level, count: picked.count, bonusSeed };
+  return { level: picked.level, count: picked.count, bonusSeed, xp, rankUp: ranks.to > ranks.from ? ranks.to : null };
 }
 
 // Unsold fruit, back in the crate.
@@ -238,6 +317,15 @@ export function couldUseAHand(c, wallNow) {
   return next == null || next > TUNING.friendNudgeMs;
 }
 
+// The lowest rank that could have built this farm: its terraces, its
+// sprinklers and its irrigation each needed one.
+function rankEvidencedBy(farm) {
+  let r = rankForTerrace(farm.terraces.length - 1);
+  if (farm.terraces.some((t) => t.sprinkler)) r = Math.max(r, rankForEquipment('sprinkler'));
+  if (farm.irrigation) r = Math.max(r, rankForEquipment('irrigation'));
+  return r;
+}
+
 // ── save / restore ─────────────────────────────────────────────────────────
 // Hostile-save discipline, as everywhere: validate field by field, discard what
 // we cannot believe. The worst a crafted save may do is give the player a farm
@@ -256,11 +344,13 @@ export function serialize(c) {
     crate: packCounts(c.crate),
     farm: c.farm ? serializeFarm(c.farm) : null,
     firstRunDone: !!c.firstRunDone,
+    xp: Math.max(0, Math.floor(c.xp)),
+    kit: STRUCTURE_KINDS.reduce((o, k) => (c.kit[k] > 0 ? { ...o, [k]: c.kit[k] } : o), {}),
   };
 }
 
 export function restore(save) {
-  if (!save || save.v !== SAVE_VERSION) return null;
+  if (!save || (save.v !== SAVE_VERSION && save.v !== 1)) return null;
   const c = makeCampaign();
   c.crate = unpackCounts(save.crate);
   c.seeds = unpackCounts(save.seeds);
@@ -273,6 +363,20 @@ export function restore(save) {
   }
 
   c.farm = save.farm ? restoreFarm(save.farm) : null;
+
+  c.kit = emptyKit();
+  if (save.kit && typeof save.kit === 'object') {
+    for (const kind of STRUCTURE_KINDS) {
+      const n = save.kit[kind];
+      if (Number.isInteger(n) && n > 0 && n < 1000) c.kit[kind] = n;
+    }
+  }
+  c.xp = Number.isInteger(save.xp) && save.xp >= 0 ? save.xp : 0;
+  // A save from before ranks existed — or one that claims less than its own
+  // farm proves — is carried up to the rank its farm already stands at, so no
+  // returning player is told they are not experienced enough for a terrace
+  // they already own.
+  if (c.farm) c.xp = Math.max(c.xp, xpForRank(rankEvidencedBy(c.farm)));
 
   // The phase and the farm have to agree, or the host has a screen to show and
   // nothing to draw on it. The farm is the evidence: having one means the

@@ -1,41 +1,41 @@
-// The mountainside and the plants growing on it. Both are pure painters, and
-// both fail in ways that are invisible in review — a stage that only draws in
-// dark theme, a plot whose hit box has drifted off the plot it belongs to. Same
-// treatment as js/scene.js and js/fruit-art.js: draw against a stub and assert
-// the parts that are rules rather than taste.
+// The mountainside. A pure painter, and it fails in ways that are invisible in
+// review — a stage that only draws in dark theme, a sign whose hit box has
+// drifted off the sign, fog that crawls under reduced motion. Same treatment as
+// js/scene.js and js/fruit-art.js: draw against a stub and assert the parts
+// that are rules rather than taste. (Where things ARE is js/farm-layout.js and
+// is tested there; the plants are js/plant-art.js and are tested there.)
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  FARM_SCENE, FARM_THEMES, farmThemeOf, terraceGeom, plotGeom, plotAtPoint,
-  forSaleBox, terracePriceBox,
-  paintFarmSky, paintRidges, paintHillside, paintTerrace, paintForSale,
-  paintTerracePrice, paintStream, paintFog, paintLanterns, paintFireflies,
+  FARM_ART, FARM_THEMES, farmThemeOf, forSaleBox, terracePriceBox, altitudeMarkerBox,
+  fogBands, lanternSpots, streamPool,
+  paintFarmSky, paintSky, paintRidges, paintHillside, paintStream, paintTerrace, paintFoot,
+  paintForSale, paintTerracePrice, paintAltitudeMarkers, paintFog, paintFireflies, paintLanterns,
 } from '../js/farm-scene.js';
-import { priceOfTerrace } from '../js/economy.js';
-import {
-  FARM_PALETTE, PLANT, STAGES, stageOf, paintPlant, paintSoil, paintTrellis, paintGlint,
-  paintProgressRing, paintCountdown, paintPlantHint, describeSeed,
-} from '../js/plant-art.js';
-import { WORLD, TUNING, MAX_LEVEL, MAX_TERRACES, FARM } from '../js/constants.js';
+import * as layout from '../js/farm-layout.js';
+import { LAYOUT, groundYOf, groundYAt, terraceGeom, worldHeight, streamCrossing } from '../js/farm-layout.js';
+import { altitudeOf } from '../js/terrain.js';
+import { TUNING, MAX_TERRACES } from '../js/constants.js';
 
-const N = TUNING.plotsPerTerrace;
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const THEMES = ['light', 'dark'];
 
 // The drawing state a real context saves and restores. Modelled here because
 // leaking one of these is the classic canvas bug and it is invisible in review:
 // a painter that dims itself and forgets to put globalAlpha back dims whatever
-// is drawn after it, on a screen that may not be the one being worked on.
+// is drawn after it.
 const STATE = ['globalAlpha', 'fillStyle', 'strokeStyle', 'lineWidth', 'lineCap',
   'font', 'textAlign', 'textBaseline'];
 
 function stubCtx() {
   const calls = [];
   const stack = [];
+  let gradientsMade = 0;
   const api = {
-    calls, get depth() { return stack.length; },
+    calls, get depth() { return stack.length; }, get gradientsMade() { return gradientsMade; },
     globalAlpha: 1, fillStyle: '', strokeStyle: '', lineWidth: 1, lineCap: 'butt',
     font: '', textAlign: 'left', textBaseline: 'alphabetic',
     save() { stack.push(STATE.map((k) => api[k])); },
@@ -48,10 +48,11 @@ function stubCtx() {
     quadraticCurveTo() {}, bezierCurveTo() {}, arc() {}, ellipse() {}, rect() {},
     fillRect() { calls.push('fill'); }, strokeRect() { calls.push('stroke'); },
     fill() { calls.push('fill'); }, stroke() { calls.push('stroke'); },
-    fillText() { calls.push('text'); }, strokeText() { calls.push('text'); },
+    fillText(s) { calls.push('text'); calls.texts = [...(calls.texts || []), s]; },
+    strokeText() { calls.push('text'); },
     measureText() { return { width: 10 }; },
-    createRadialGradient() { return { addColorStop() {} }; },
-    createLinearGradient() { return { addColorStop() {} }; },
+    createRadialGradient() { gradientsMade++; return { addColorStop() {} }; },
+    createLinearGradient() { gradientsMade++; return { addColorStop() {} }; },
   };
   return api;
 }
@@ -60,39 +61,63 @@ function overlaps(a, b) {
   return a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
 }
 
-// Every describable plot state: each kind at each of its stages.
-function everyPlantState() {
-  const out = [];
-  for (let level = 1; level <= MAX_LEVEL; level++) {
-    const kind = FARM[level - 1].kind;
-    for (const progress of [0, 0.1, 0.3, 0.5, 0.8, 1]) {
-      for (const mature of [false, true]) {
-        for (const ripe of [false, true]) out.push({ kind, level, progress, mature, ripe });
-      }
-    }
+// The whole frame, in the order the host draws it.
+function paintWorld(ctx, th, tMs, motion, view) {
+  paintFarmSky(ctx, th, 400, 700);
+  paintSky(ctx, th, tMs, motion);
+  paintRidges(ctx, th);
+  paintHillside(ctx, th, view);
+  paintStream(ctx, th, tMs, motion, view);
+  for (let i = MAX_TERRACES - 1; i >= 0; i--) {
+    paintTerrace(ctx, th, i, i < 3, { sprinkler: i === 1, irrigated: i === 2 });
   }
-  return out;
+  paintFoot(ctx, th, tMs, motion);
+  paintForSale(ctx, th, 3, 2000, tMs, motion, 'Rank 4 needed');
+  for (let i = 4; i < MAX_TERRACES; i++) paintTerracePrice(ctx, th, i, TUNING.terraceCosts[i]);
+  paintAltitudeMarkers(ctx, th);
+  paintFog(ctx, th, tMs, motion, view);
+  paintFireflies(ctx, th, tMs, motion, view);
+  paintLanterns(ctx, th, tMs, motion);
 }
 
 // ── the scene ──────────────────────────────────────────────────────────────
 
 test('both themes paint a full mountainside and leave the context balanced', () => {
-  for (const theme of ['light', 'dark']) {
+  for (const theme of THEMES) {
     const ctx = stubCtx();
-    const th = farmThemeOf({ theme });
-    paintFarmSky(ctx, th, 400, 700);
-    paintRidges(ctx, th);
-    paintHillside(ctx, th);
-    for (let i = 0; i < FARM_SCENE.bands; i++) paintTerrace(ctx, th, i, i < 2);
-    paintStream(ctx, th, 5000, 1);
-    paintFog(ctx, th, 5000, 1);
-    paintFireflies(ctx, th, 5000, 1);
-    paintLanterns(ctx, th, 5000, 1);
-    paintForSale(ctx, th, 3, 1200, 5000, 1);
-    assert.ok(ctx.calls.filter((c) => c === 'fill').length > 20, `${theme} barely fills anything`);
+    paintWorld(ctx, farmThemeOf({ theme }), 5000, 1);
+    assert.ok(ctx.calls.filter((c) => c === 'fill').length > 100, `${theme} barely fills anything`);
     assert.ok(ctx.calls.includes('stroke'), `${theme} strokes nothing`);
     assert.ok(ctx.calls.includes('text'), `${theme} never writes 出售`);
     assert.equal(ctx.depth, 0, `${theme} leaks a save()`);
+    assert.equal(ctx.globalAlpha, 1, `${theme} left the context dimmed`);
+  }
+});
+
+// Painted every frame: the budget is a few hundred fills for the WHOLE world,
+// and a phone-sized view should cost well under that.
+test('a frame stays within its fill budget, and a view makes it cheaper', () => {
+  for (const theme of THEMES) {
+    const th = farmThemeOf({ theme });
+    const all = stubCtx();
+    paintWorld(all, th, 5000, 1);
+    const fills = all.calls.filter((c) => c === 'fill').length;
+    assert.ok(fills < 600, `${theme} costs ${fills} fills a frame`);
+    const H = worldHeight();
+    const bottom = stubCtx();
+    paintWorld(bottom, th, 5000, 1, { top: H - 690, bottom: H });
+    assert.ok(bottom.calls.length < all.calls.length, `${theme}: the view culled nothing`);
+  }
+});
+
+test('gradients are built once per context, not once per frame', () => {
+  for (const theme of THEMES) {
+    const ctx = stubCtx();
+    const th = farmThemeOf({ theme });
+    paintWorld(ctx, th, 1000, 1);
+    const first = ctx.gradientsMade;
+    for (const tMs of [2000, 9000, 60000]) paintWorld(ctx, th, tMs, 1);
+    assert.equal(ctx.gradientsMade, first, `${theme} rebuilt a gradient on a later frame`);
   }
 });
 
@@ -104,106 +129,266 @@ test('an unknown or missing theme falls back to the morning rather than throwing
 });
 
 test('every theme defines every colour the painters reach for', () => {
-  const keys = Object.keys(FARM_THEMES.light);
+  const keys = new Set([...Object.keys(FARM_THEMES.light), ...Object.keys(FARM_THEMES.dark)]);
   for (const [name, th] of Object.entries(FARM_THEMES)) {
     for (const k of keys) assert.ok(k in th, `${name} theme is missing ${k}`);
     assert.equal(th.sky.length, 2, `${name} sky needs two stops`);
+    assert.equal(th.skyWorld.length, 3, `${name} world sky needs three stops`);
+    assert.equal(th.ridges.length, 3, `${name} needs three ridges`);
+    assert.equal(th.flowers.length, 3);
+    for (const band of ['low', 'mid', 'high']) assert.ok(band in th.tint, `${name} has no ${band} tint`);
+  }
+  // one of the two lights the sky; the morning has the sun, the dusk the moon
+  assert.ok(FARM_THEMES.light.sun && !FARM_THEMES.light.moon);
+  assert.ok(FARM_THEMES.dark.moon && !FARM_THEMES.dark.sun && FARM_THEMES.dark.star);
+});
+
+test('the valley is warm and the ridge is cool', () => {
+  for (const th of Object.values(FARM_THEMES)) {
+    const rgb = (s) => s.match(/[\d.]+/g).map(Number);
+    const [lr, , lb] = rgb(th.tint.low);
+    const [hr, , hb] = rgb(th.tint.high);
+    assert.ok(lr > lb, 'the valley tint is not warm');
+    assert.ok(hb > hr, 'the ridge tint is not cool');
   }
 });
 
-test('only the evening farm is lantern-lit', () => {
+test('only the evening farm is lantern-lit, by the house and the bridge', () => {
   assert.equal(FARM_THEMES.light.lantern, null);
   assert.ok(FARM_THEMES.dark.lantern);
   const day = stubCtx();
   paintLanterns(day, FARM_THEMES.light, 5000, 1);
   assert.equal(day.calls.length, 0, 'lanterns burning at breakfast');
+  const dusk = stubCtx();
+  paintLanterns(dusk, FARM_THEMES.dark, 5000, 1);
+  assert.ok(dusk.calls.includes('fill'));
+  assert.equal(dusk.depth, 0);
+  // down at the foot of the mountain, not up among the crops
+  for (const s of lanternSpots()) assert.ok(s.y > groundYOf(0), 'a lantern is hanging over a shelf');
 });
 
-test('the whole mountain fits the world with sky to spare — the farm never scrolls', () => {
-  const bottom = terraceGeom(0);
-  const top = terraceGeom(FARM_SCENE.bands - 1);
-  assert.ok(bottom.groundY + FARM_SCENE.wallH <= WORLD.height,
-    'the bottom terrace hangs off the world');
-  assert.ok(top.groundY - FARM_SCENE.plantH > 0, 'the top terrace grows off the top of the sky');
-  assert.equal(FARM_SCENE.bands, MAX_TERRACES, 'the mountain and the shop disagree on how many terraces exist');
-});
+// ── the sky ───────────────────────────────────────────────────────────────
 
-test('terraces stack upward and narrow with distance', () => {
-  for (let i = 1; i < FARM_SCENE.bands; i++) {
-    const below = terraceGeom(i - 1);
-    const here = terraceGeom(i);
-    assert.ok(here.groundY < below.groundY, `terrace ${i} is not above terrace ${i - 1}`);
-    assert.ok(here.width < below.width, `terrace ${i} is not narrower than terrace ${i - 1}`);
+test('the sky holds still under reduced motion and drifts with it', () => {
+  for (const th of Object.values(FARM_THEMES)) {
+    const a = stubCtx(); paintSky(a, th, 0, 0);
+    const b = stubCtx(); paintSky(b, th, 987654, 0);
+    assert.deepEqual(a.calls, b.calls, 'the sky moved under reduced motion');
+    assert.equal(a.depth, 0);
+    assert.equal(a.globalAlpha, 1, 'the stars left the context dimmed');
+    assert.ok(a.calls.filter((c) => c === 'fill').length >= 5, 'an empty sky');
   }
-  assert.ok(terraceGeom(FARM_SCENE.bands - 1).width > 120, 'the top terrace is too narrow to farm');
+  const dusk = stubCtx(); paintSky(dusk, FARM_THEMES.dark, 0, 0);
+  const day = stubCtx(); paintSky(day, FARM_THEMES.light, 0, 0);
+  assert.ok(day.calls.includes('stroke'), 'no birds in the morning');
+  assert.ok(!dusk.calls.includes('stroke'), 'birds out at dusk');
 });
 
-test('plots tile their terrace without overlapping or spilling off it', () => {
-  for (let ti = 0; ti < FARM_SCENE.bands; ti++) {
-    const t = terraceGeom(ti);
-    let prevRight = -Infinity;
-    for (let pi = 0; pi < N; pi++) {
-      const g = plotGeom(ti, pi, N);
-      assert.ok(g.w > 0, `terrace ${ti} plot ${pi} has no width`);
-      assert.ok(g.cx - g.w / 2 >= t.left - 0.01, `terrace ${ti} plot ${pi} spills off the left`);
-      assert.ok(g.cx + g.w / 2 <= t.right + 0.01, `terrace ${ti} plot ${pi} spills off the right`);
-      assert.ok(g.cx - g.w / 2 >= prevRight - 0.01, `terrace ${ti} plots ${pi - 1} and ${pi} overlap`);
-      prevRight = g.cx + g.w / 2;
-      assert.equal(g.groundY, t.groundY);
-      assert.ok(g.h > 0);
-    }
+test('the ridges and hillside are static scenery', () => {
+  for (const th of Object.values(FARM_THEMES)) {
+    const r = stubCtx(); paintRidges(r, th);
+    assert.ok(r.calls.filter((c) => c === 'fill').length >= 3, 'fewer than three ridges');
+    const h = stubCtx(); paintHillside(h, th);
+    assert.ok(h.calls.length > 20, 'a bare hillside');
+    assert.equal(h.depth, 0);
   }
 });
 
-test('a plot is big enough to hit with a thumb, even at the top of the mountain', () => {
-  // the world is 360 units across a phone's ~390 CSS px, so a world unit is
-  // roughly a pixel and change — 44 units clears the 44px touch-target floor
-  const smallest = plotGeom(FARM_SCENE.bands - 1, 0, N);
-  assert.ok(smallest.w >= 44, `the top terrace's plots are only ${smallest.w.toFixed(0)} units wide`);
-});
+// ── the terraces ──────────────────────────────────────────────────────────
 
-test('tapping a plot finds the plot that was drawn there, and nothing else', () => {
-  for (let ti = 0; ti < FARM_SCENE.bands; ti++) {
-    for (let pi = 0; pi < N; pi++) {
-      const g = plotGeom(ti, pi, N);
-      // the strip itself, and the airspace above it where the plant is drawn
-      for (const y of [g.groundY - 1, g.groundY - FARM_SCENE.plantH]) {
-        assert.deepEqual(plotAtPoint(g.cx, y, FARM_SCENE.bands, N), { ti, pi },
-          `a tap at (${g.cx.toFixed(0)}, ${y.toFixed(0)}) missed terrace ${ti} plot ${pi}`);
+test('every terrace paints, bought or not, with and without its fixtures', () => {
+  for (const th of Object.values(FARM_THEMES)) {
+    for (let i = 0; i < MAX_TERRACES; i++) {
+      for (const owned of [true, false]) {
+        for (const opts of [undefined, {}, { sprinkler: true }, { irrigated: true }, { sprinkler: true, irrigated: true }]) {
+          const ctx = stubCtx();
+          paintTerrace(ctx, th, i, owned, opts);
+          assert.ok(ctx.calls.length > 5);
+          assert.equal(ctx.depth, 0);
+        }
       }
     }
   }
-  // the sky above the mountain and the road below it belong to nobody
-  assert.equal(plotAtPoint(180, 4, FARM_SCENE.bands, N), null);
-  assert.equal(plotAtPoint(180, WORLD.height - 2, FARM_SCENE.bands, N), null);
-  // and an unbought terrace is not tappable as a plot
-  assert.equal(plotAtPoint(plotGeom(3, 0, N).cx, terraceGeom(3).groundY - 1, 2, N), null);
 });
 
+// The shelves follow the hill: a wall drawn to a ruled line on a bowed shelf
+// is the bug the curved layout exists to fix. Record every point a terrace
+// paints through and check its wall top tracks groundYAt along its length.
+test('a terrace wall follows its own contour, end to end', () => {
+  for (let i = 0; i < MAX_TERRACES; i++) {
+    const pts = [];
+    const ctx = stubCtx();
+    ctx.moveTo = ctx.lineTo = (x, y) => pts.push([x, y]);
+    paintTerrace(ctx, FARM_THEMES.light, i, true, {});
+    const t = terraceGeom(i);
+    // the soil band's front edge: the points that sit exactly on the ground line
+    const on = pts.filter(([x, y]) => Math.abs(y - groundYAt(i, x)) < 0.01);
+    assert.ok(on.length > 40, `terrace ${i} has only ${on.length} points on its contour`);
+    const xs = on.map(([x]) => x);
+    // edge to edge: no shelf ends in view
+    assert.ok(Math.min(...xs) <= t.left, `terrace ${i} stops short of the left edge`);
+    assert.ok(Math.max(...xs) >= t.right, `terrace ${i} stops short of the right edge`);
+  }
+});
+
+// The stream crosses every shelf, and the crossing is drawn as part of the
+// terrace — after the wall — so the fall is on top of the stones it runs down.
+test('every terrace carries the stream across it, over its wall', () => {
+  for (let i = 0; i < MAX_TERRACES; i++) {
+    const c = streamCrossing(i);
+    const fills = [];
+    const ctx = stubCtx();
+    let style = '';
+    Object.defineProperty(ctx, 'fillStyle', { get: () => style, set: (v) => { style = v; } });
+    const fill = ctx.fill;
+    ctx.fill = () => { fills.push(style); fill(); };
+    paintTerrace(ctx, FARM_THEMES.light, i, true, {});
+    const th = FARM_THEMES.light;
+    const lastStone = fills.lastIndexOf(th.stone);
+    assert.ok(lastStone >= 0);
+    assert.ok(fills.lastIndexOf(th.streamLight) > lastStone, `terrace ${i}'s fall is under its wall`);
+    assert.ok(fills.lastIndexOf(th.stream) > lastStone, `terrace ${i} has no channel over its shelf`);
+    assert.ok(c.hi > c.lo);
+  }
+  // and still, without a clock; running, with one
+  const a = stubCtx(); paintTerrace(a, FARM_THEMES.light, 3, true, { tMs: 0, motion: 0 });
+  const b = stubCtx(); paintTerrace(b, FARM_THEMES.light, 3, true, { tMs: 98765, motion: 0 });
+  assert.deepEqual(a.calls, b.calls, 'the fall ran under reduced motion');
+});
+
+// Lake → run → drop → pool → run. Each fall lands in a plunge pool on the
+// slope below its wall: the stream spread out and deepened, wider than it is
+// long, clear of the lower shelf's tiles — and with nothing drawn round it
+// that could read as a dam.
+test('every fall lands in a plunge pool at its foot, clear of the tiles and with no rim', () => {
+  const th = FARM_THEMES.light;
+  for (let i = 0; i < MAX_TERRACES; i++) {
+    const c = streamCrossing(i);
+    const foot = c.y + LAYOUT.wallH;
+    const p = streamPool(i);
+    assert.ok(p.top <= foot + 1 && p.top >= foot - 8, `terrace ${i}'s pool is not at the foot of its fall`);
+    assert.ok(p.bottom > foot + 8, `terrace ${i}'s pool is not on the slope below`);
+    const w = layout.streamWAt(p.cy);
+    assert.ok(p.w / 1.1 >= 1.45 * w && p.w / 1.1 <= 1.85 * w, `terrace ${i}'s pool is ${(p.w / 1.1 / w).toFixed(2)}× the stream`);
+    assert.ok(p.w > p.bottom - p.top, `terrace ${i}'s pool is longer than it is wide`);
+    assert.ok(Math.abs(p.cx - layout.streamCenterAt(p.cy)) < 0.01, `terrace ${i}'s pool is off the stream`);
+    if (i > 0) {
+      for (let col = 0; col < LAYOUT.cols; col++) {
+        const t = layout.tileGeom(i - 1, col);
+        const overlapX = t.x < p.x + p.w && p.x < t.x + t.w;
+        assert.ok(!overlapX || p.bottom < t.groundY - LAYOUT.plantH, `terrace ${i}'s pool reaches tile ${col} below`);
+      }
+    }
+    // record what each fill on the terrace covers, and check nothing but water
+    // is painted over the pool itself
+    const ctx = stubCtx();
+    let style = '', pts = [];
+    Object.defineProperty(ctx, 'fillStyle', { get: () => style, set: (v) => { style = v; } });
+    ctx.beginPath = () => { pts = []; };
+    // outlines by their vertices, round things by their centres
+    ctx.moveTo = () => {};
+    ctx.lineTo = (x, y) => pts.push([x, y]);
+    ctx.ellipse = (x, y) => pts.push([x, y]);
+    ctx.arc = (x, y) => pts.push([x, y]);
+    const border = new Set([th.bank, th.rock, th.rockDark, th.streamLight]);
+    let poolDrawn = false;
+    ctx.fill = () => {
+      // the pool is the one gradient fill; only what is drawn on top of it counts
+      if (typeof style !== 'string' && pts.length > 10) { poolDrawn = true; return; }
+      if (!poolDrawn || !border.has(style)) return;
+      for (const [x, y] of pts) {
+        const inside = ((x - p.cx) / (p.w / 2.2)) ** 2 + ((y - p.cy) / ((p.bottom - p.top) / 2.2)) ** 2 < 0.9 && y > foot + 1;
+        assert.ok(!inside, `terrace ${i}: a ${style} shape is drawn on its plunge pool at (${x.toFixed(1)}, ${y.toFixed(1)})`);
+      }
+    };
+    paintTerrace(ctx, th, i, true, {});
+    assert.ok(poolDrawn, `terrace ${i} drew no plunge pool`);
+  }
+});
+
+test('the stream comes down from a lake, which holds still without motion', () => {
+  for (const th of Object.values(FARM_THEMES)) {
+    for (const k of ['lake', 'lakeDeep', 'lakeFar', 'lakeSheen', 'lakeShore', 'reed', 'poolDeep']) assert.ok(th[k], `${th.id} has no ${k}`);
+    const r = stubCtx(); paintRidges(r, th);
+    assert.ok(r.calls.filter((c) => c === 'fill').length >= 8, 'the lake is missing from the far hills');
+    const still = stubCtx(); paintStream(still, th, 0, 0, { top: 0, bottom: 300 });
+    const later = stubCtx(); paintStream(later, th, 77777, 0, { top: 0, bottom: 300 });
+    assert.deepEqual(still.calls, later.calls, 'the lake shimmered under reduced motion');
+    const moving = stubCtx(); paintStream(moving, th, 77777, 1, { top: 0, bottom: 300 });
+    assert.ok(moving.calls.length > still.calls.length, 'the lake never catches the light');
+  }
+});
+
+test('the plumbing runs along the tiles and never across the water', () => {
+  for (let i = 0; i < MAX_TERRACES; i++) {
+    const c = streamCrossing(i);
+    const pts = [];
+    const ctx = stubCtx();
+    let stroke = '';
+    Object.defineProperty(ctx, 'strokeStyle', { get: () => stroke, set: (v) => { stroke = v; } });
+    // the pipe, and the irrigation channel (the only 3.2-wide streamDark line)
+    const lineTo = (x, y) => {
+      if (stroke === FARM_THEMES.light.pipe || (stroke === FARM_THEMES.light.streamDark && ctx.lineWidth === 3.2)) pts.push([x, y]);
+    };
+    ctx.lineTo = lineTo; ctx.moveTo = lineTo;
+    paintTerrace(ctx, FARM_THEMES.light, i, true, { sprinkler: true, irrigated: true });
+    assert.ok(pts.length > 20, `terrace ${i} laid no plumbing`);
+    for (const [x, y] of pts) {
+      if (Math.abs(y - (groundYAt(i, x) - LAYOUT.soilH)) > 3) continue;  // the stream's own banks, not plumbing
+      assert.ok(x < c.lo || x > c.hi, `terrace ${i}: plumbing at x=${x.toFixed(1)} is in the stream`);
+    }
+  }
+});
+
+test('an unbought terrace is visibly the same terrace, gone to seed', () => {
+  const bought = stubCtx(); paintTerrace(bought, FARM_THEMES.light, 2, true);
+  const weedy = stubCtx(); paintTerrace(weedy, FARM_THEMES.light, 2, false);
+  assert.ok(bought.calls.length > 0 && weedy.calls.length > 0);
+  assert.ok(weedy.calls.length > bought.calls.length + 4, 'the weeds never grew');
+});
+
+test('a sprinkler and a channel each add something to a shelf', () => {
+  const count = (opts) => { const c = stubCtx(); paintTerrace(c, FARM_THEMES.light, 1, true, opts); return c.calls.length; };
+  const plain = count({});
+  assert.ok(count({ sprinkler: true }) > plain, 'the sprinkler was not drawn');
+  assert.ok(count({ irrigated: true }) > plain, 'the channel was not drawn');
+  // …and only on a shelf the player owns
+  const a = stubCtx(); paintTerrace(a, FARM_THEMES.light, 5, false, {});
+  const b = stubCtx(); paintTerrace(b, FARM_THEMES.light, 5, false, { sprinkler: true, irrigated: true });
+  assert.deepEqual(a.calls, b.calls, 'plumbing on a shelf nobody owns');
+});
+
+// ── the sign and the markers ──────────────────────────────────────────────
+
 test('the 出售 sign sits on the terrace it is selling, and reports its own hit box', () => {
-  for (let i = 1; i < FARM_SCENE.bands; i++) {
+  for (let i = 1; i < MAX_TERRACES; i++) {
     const painted = paintForSale(stubCtx(), FARM_THEMES.light, i, TUNING.terraceCosts[i], 5000, 1);
     assert.deepEqual(painted, forSaleBox(i), 'the sign is drawn somewhere other than its hit box');
+    assert.deepEqual(forSaleBox(i), layout.forSaleBox(i), 'the painter and the layout disagree on the box');
     const t = terraceGeom(i);
     assert.ok(painted.x >= t.left && painted.x + painted.w <= t.right, `sign ${i} hangs off its terrace`);
-    assert.ok(painted.y + painted.h <= t.groundY, `sign ${i} is buried in the wall`);
+    assert.ok(painted.y + painted.h <= groundYAt(i, painted.x + painted.w / 2), `sign ${i} is buried in the wall`);
     assert.ok(painted.w >= 44 && painted.h >= 28, 'the sign is too small to tap');
   }
 });
 
 // The sign is a destination, not set dressing: what it costs is painted on it,
-// so the whole "buy the farm" beat is legible from the road without a sheet.
-test('the sign wears its price, and is still a sign without one', () => {
-  const priced = stubCtx();
-  paintForSale(priced, FARM_THEMES.light, 1, 500, 0, 0);
-  const bare = stubCtx();
-  paintForSale(bare, FARM_THEMES.light, 1, null, 0, 0);
-  assert.equal(priced.calls.filter((c) => c === 'text').length, 2, 'the price never made it onto the board');
-  assert.equal(bare.calls.filter((c) => c === 'text').length, 1, 'a priceless sign should still say 出售');
-  // and the biggest number on the mountain still fits between the posts
+// so the whole "buy a shelf" beat is legible from the road without a sheet.
+test('the sign wears its price, an optional note, and is still a sign without either', () => {
+  const priced = stubCtx(); paintForSale(priced, FARM_THEMES.light, 1, 500, 0, 0);
+  const bare = stubCtx(); paintForSale(bare, FARM_THEMES.light, 1, null, 0, 0);
+  const noted = stubCtx(); paintForSale(noted, FARM_THEMES.light, 1, 500, 0, 0, 'Rank 4 needed');
+  const texts = (c) => c.calls.filter((x) => x === 'text').length;
+  assert.equal(texts(priced), 2, 'the price never made it onto the board');
+  assert.equal(texts(bare), 1, 'a priceless sign should still say 出售');
+  assert.equal(texts(noted), 3, 'the note never made it onto the board');
+  assert.ok(noted.calls.texts.includes('Rank 4 needed'));
+  assert.equal(noted.depth, 0);
+  // and the biggest number on the mountain still fits between the edges
   const dearest = Math.max(...TUNING.terraceCosts);
-  assert.ok(String(`${dearest}元`).length * FARM_SCENE.signH * 0.28 * 0.6 < FARM_SCENE.signW,
+  assert.ok(String(`${dearest}元`).length * LAYOUT.signH * 0.28 * 0.6 < LAYOUT.signW,
     'the top terrace’s price overflows the sign it is painted on');
+  assert.ok('Rank 10 needed'.length * LAYOUT.signH * 0.17 * 0.55 < LAYOUT.signW - 8, 'a note overflows the sign');
 });
 
 test('the sign leans in the breeze without taking its hit box with it', () => {
@@ -212,48 +397,44 @@ test('the sign leans in the breeze without taking its hit box with it', () => {
   const later = stubCtx();
   const b = paintForSale(later, FARM_THEMES.light, 2, 1200, 987654, 0);
   assert.deepEqual(still.calls, later.calls, 'the sign swayed under reduced motion');
-  // whatever the clock says and whatever the sway is doing, the box is the box
   for (const tMs of [0, 900, 4200, 987654]) {
     assert.deepEqual(paintForSale(stubCtx(), FARM_THEMES.dark, 2, 1200, tMs, 1), forSaleBox(2),
       `the hit box drifted with the sway at ${tMs}ms`);
   }
   assert.deepEqual(a, b);
+  assert.ok(FARM_ART.signSway > 0 && FARM_ART.signSway < 0.1, 'a pendulum, not a breeze');
 });
 
 // The ladder up the hill: one tappable offer, and every shelf above it wearing
-// its price as set dressing. The invariant that matters is that a marker can
-// never be mistaken for the sign — it must not sit under it, and it must not
-// answer a tap.
+// its price as set dressing. A marker must never sit under the sign.
 test('every shelf above the offer wears its price, clear of the sign', () => {
-  for (let i = 1; i < FARM_SCENE.bands; i++) {
+  for (let i = 1; i < MAX_TERRACES; i++) {
     const painted = paintTerracePrice(stubCtx(), FARM_THEMES.light, i, TUNING.terraceCosts[i]);
     assert.deepEqual(painted, terracePriceBox(i), 'the marker is drawn somewhere other than its box');
     const t = terraceGeom(i);
-    assert.ok(painted.x >= t.left && painted.x + painted.w <= t.right, `marker ${i} hangs off its terrace`);
-    assert.ok(painted.y + painted.h <= t.groundY, `marker ${i} is buried in the wall`);
+    assert.ok(painted.x >= t.left && painted.x + painted.w <= Math.max(t.right, LAYOUT.width), `marker ${i} hangs off its terrace`);
+    assert.ok(painted.y + painted.h <= groundYAt(i, painted.x + painted.w / 2), `marker ${i} is buried in the wall`);
     assert.ok(!overlaps(painted, forSaleBox(i)), `marker ${i} sits under the sign`);
   }
 });
 
 test('a terrace with no price to quote gets no marker at all', () => {
   const ctx = stubCtx();
-  assert.equal(paintTerracePrice(ctx, FARM_THEMES.light, 0, priceOfTerrace(0)), null,
-    'the starter terrace is bought as a farm, not priced as a shelf');
   assert.equal(paintTerracePrice(ctx, FARM_THEMES.light, 2, null), null);
+  assert.equal(paintTerracePrice(ctx, FARM_THEMES.light, 2, undefined), null);
   assert.equal(ctx.calls.length, 0, 'a priceless shelf still got a board nailed to it');
 });
 
-// A price that touches its own frame reads as a bug. 0.8em per glyph is a
-// deliberate over-estimate — bold digits run nearer 0.6 and only 元 is
-// full-width — so a marker that passes this has visible margin, not none.
+// 0.8em per glyph is a deliberate over-estimate, so a marker that passes this
+// has visible margin, not none.
 test('the dearest shelf on the mountain fits inside its own marker', () => {
   const dearest = `${Math.max(...TUNING.terraceCosts)}元`;
-  const width = dearest.length * FARM_SCENE.markerH * 0.56 * 0.8;
-  assert.ok(width < FARM_SCENE.markerW - 4,
-    `"${dearest}" needs ~${width.toFixed(0)} units in a ${FARM_SCENE.markerW}-unit marker`);
+  const width = dearest.length * LAYOUT.markerH * 0.56 * 0.8;
+  assert.ok(width < LAYOUT.markerW - 4,
+    `"${dearest}" needs ~${width.toFixed(0)} units in a ${LAYOUT.markerW}-unit marker`);
 });
 
-test('a price marker is scenery: no glint, and quieter than the sign', () => {
+test('a price marker is scenery: quieter than the sign', () => {
   const marker = stubCtx();
   paintTerracePrice(marker, FARM_THEMES.dark, 2, 1200);
   const sign = stubCtx();
@@ -273,21 +454,55 @@ test('only the evening lights the sign', () => {
     'the dusk sign has no glow pooled behind it');
 });
 
-test('an unbought terrace is visibly the same terrace, gone to seed', () => {
-  const bought = stubCtx(); paintTerrace(bought, FARM_THEMES.light, 2, true);
-  const weedy = stubCtx(); paintTerrace(weedy, FARM_THEMES.light, 2, false);
-  assert.ok(bought.calls.length > 0 && weedy.calls.length > 0);
-  assert.ok(weedy.calls.filter((c) => c === 'stroke').length >
-    bought.calls.filter((c) => c === 'stroke').length, 'the weeds never grew');
+test('each altitude band is named once, at its lowest shelf, beside the stream', () => {
+  const ctx = stubCtx();
+  paintAltitudeMarkers(ctx, FARM_THEMES.light);
+  assert.equal(ctx.depth, 0);
+  assert.equal(ctx.globalAlpha, 1);
+  // one marker per band, on the first shelf of that band
+  const bands = FARM_ART.bandStarts.map(altitudeOf);
+  assert.deepEqual(bands, ['low', 'mid', 'high']);
+  for (const i of FARM_ART.bandStarts) {
+    assert.ok(i === 0 || altitudeOf(i - 1) !== altitudeOf(i), `terrace ${i} is not where its band starts`);
+    const b = altitudeMarkerBox(i);
+    assert.ok(b.x + b.w <= layout.tileGeom(i, 0).x + 2, `the ${altitudeOf(i)} marker stands on a tile`);
+    assert.ok(b.y + b.h <= groundYAt(i, b.x + b.w / 2), 'the marker is buried');
+    // …at the left edge of the shelf, and never standing in the water
+    assert.ok(b.x >= 0 && b.x <= 6, `the ${altitudeOf(i)} marker is not at the left edge`);
+    assert.ok(b.x + b.w <= streamCrossing(i).lo, `the ${altitudeOf(i)} marker is standing in the stream`);
+  }
+  assert.equal(ctx.calls.texts.join(''), FARM_ART.bandStarts.map((i) => FARM_ART.bandNames[altitudeOf(i)]).join(''));
 });
 
+// ── the foot of the mountain ──────────────────────────────────────────────
+
+test('the road and the farmhouse sit below the bottom wall, and the chimney only smokes with motion', () => {
+  for (const th of Object.values(FARM_THEMES)) {
+    const a = stubCtx(); paintFoot(a, th, 0, 0);
+    const b = stubCtx(); paintFoot(b, th, 987654, 0);
+    assert.deepEqual(a.calls, b.calls, 'the foot moved under reduced motion');
+    assert.ok(a.calls.filter((c) => c === 'fill').length > 20, 'no house at the foot of the hill');
+    const moving = stubCtx(); paintFoot(moving, th, 987654, 1);
+    assert.ok(moving.calls.length > a.calls.length, 'no smoke from the chimney');
+    assert.equal(moving.depth, 0);
+    assert.equal(moving.globalAlpha, 1);
+  }
+});
+
+// ── the ambient budget ─────────────────────────────────────────────────────
+//
+// The rule the whole farm screen is held to: INFORMATION holds still under
+// reduced motion, DECORATION disappears or stops.
+
 test('the ambient layers hold perfectly still under reduced motion', () => {
-  for (const paint of [paintFog, paintStream]) {
-    const a = stubCtx(); paint(a, FARM_THEMES.light, 0, 0);
-    const b = stubCtx(); paint(b, FARM_THEMES.light, 987654, 0);
-    assert.deepEqual(a.calls, b.calls, `${paint.name} drifted under reduced motion`);
-    const moving = stubCtx(); paint(moving, FARM_THEMES.light, 987654, 1);
-    assert.ok(moving.calls.length >= a.calls.length, `${paint.name} draws less when it is allowed to move`);
+  for (const th of Object.values(FARM_THEMES)) {
+    for (const paint of [paintFog, paintStream, paintSky, paintFoot]) {
+      const a = stubCtx(); paint(a, th, 0, 0);
+      const b = stubCtx(); paint(b, th, 987654, 0);
+      assert.deepEqual(a.calls, b.calls, `${paint.name} drifted under reduced motion`);
+      const moving = stubCtx(); paint(moving, th, 987654, 1);
+      assert.ok(moving.calls.length >= a.calls.length, `${paint.name} draws less when it is allowed to move`);
+    }
   }
   // the water still reads as water when it cannot shimmer
   const still = stubCtx();
@@ -295,110 +510,19 @@ test('the ambient layers hold perfectly still under reduced motion', () => {
   assert.ok(still.calls.includes('fill'));
 });
 
-// ── the plants ─────────────────────────────────────────────────────────────
-
-test('every fruit at every stage in both themes paints without throwing', () => {
-  let painted = 0;
-  for (const desc of everyPlantState()) {
-    for (const motion of [0, 1]) {
-      const ctx = stubCtx();
-      paintSoil(ctx, 40, 8, { wet: motion === 1 });
-      if (desc.kind === 'vine') paintTrellis(ctx, 40, 46);
-      const stage = paintPlant(ctx, desc, 46, { tMs: 5000, motion });
-      assert.ok(STAGES.includes(stage), `unknown stage ${stage}`);
-      assert.equal(ctx.depth, 0, `level ${desc.level} at ${stage} leaks a save()`);
-      assert.ok(ctx.calls.length > 0, `level ${desc.level} at ${stage} drew nothing at all`);
-      painted++;
-    }
+test('the fog lies where the bands meet, and nowhere else', () => {
+  const ys = fogBands();
+  assert.equal(ys.length, 2);
+  for (const [k, y] of ys.entries()) {
+    const upper = FARM_ART.bandStarts[k + 1];
+    assert.ok(y > groundYOf(upper) && y < groundYOf(upper - 1), `fog ${k} is not between terraces ${upper - 1} and ${upper}`);
+    assert.notEqual(altitudeOf(upper), altitudeOf(upper - 1));
   }
-  assert.ok(painted > 200, `only ${painted} plant states were exercised`);
-});
-
-test('bare ground draws no plant, and says so', () => {
+  // and a view that holds no boundary holds no fog
   const ctx = stubCtx();
-  assert.equal(paintPlant(ctx, { kind: null, level: 0 }, 46, {}), 'empty');
-  assert.equal(paintPlant(ctx, null, 46, {}), 'empty');
-  assert.equal(ctx.calls.length, 0, 'something grew on nothing');
+  paintFog(ctx, FARM_THEMES.light, 0, 1, { top: groundYOf(1) - 40, bottom: groundYOf(0) });
+  assert.equal(ctx.calls.length, 0, 'fog in the valley');
 });
-
-test('a plant only gets bigger as it grows, and only carries fruit when ripe', () => {
-  for (let level = 1; level <= MAX_LEVEL; level++) {
-    const kind = FARM[level - 1].kind;
-    const perennial = kind !== 'bed';
-    const at = (progress, mature, ripe) => stageOf({ kind, level, progress, mature, ripe });
-
-    if (perennial) {
-      assert.equal(at(0, false, false), 'seed');
-      assert.equal(at(0.3, false, false), 'sapling');
-      assert.equal(at(0.9, false, false), 'young');
-      // a mature tree between crops is a full tree, however far into the cycle
-      assert.equal(at(0, true, false), 'grown');
-      assert.equal(at(0.9, true, false), 'grown');
-    } else {
-      assert.equal(at(0, false, false), 'seed');
-      assert.equal(at(0.3, false, false), 'sprout');
-      assert.equal(at(0.9, false, false), 'grown');
-    }
-    // ripe outranks everything: it is the state the player has to notice
-    for (const mature of [false, true]) assert.equal(at(0, mature, true), 'ripe');
-  }
-});
-
-test('a nonsense description is drawn as something rather than crashing', () => {
-  for (const junk of [
-    { kind: 'bed', level: 0, progress: NaN, ripe: true },
-    { kind: 'tree', level: 999, progress: -5, mature: true, ripe: true },
-    { kind: 'vine', level: null, progress: 'lots', ripe: true },
-    { kind: 'bed', level: 2.5, progress: Infinity, ripe: false },
-  ]) {
-    const ctx = stubCtx();
-    const stage = paintPlant(ctx, junk, 46, { tMs: 0, motion: 1 });
-    assert.ok(STAGES.includes(stage));
-    assert.equal(ctx.depth, 0);
-  }
-});
-
-test('the glint is how ripe is announced, and it stays lit under reduced motion', () => {
-  const a = stubCtx(); paintGlint(a, 46, 0, 0);
-  const b = stubCtx(); paintGlint(b, 46, 12345, 0);
-  assert.deepEqual(a.calls, b.calls, 'the glint twinkled under reduced motion');
-  assert.ok(a.calls.includes('fill'), 'the glint went out under reduced motion');
-  const moving = stubCtx(); paintGlint(moving, 46, 12345, 1);
-  assert.ok(moving.calls.includes('fill'));
-  assert.ok(PLANT.glintMs > 0);
-});
-
-test('nothing but a ripe plant glints', () => {
-  const bare = { kind: 'bed', level: 2, progress: 0.9, ripe: false };
-  const ripe = { ...bare, ripe: true };
-  const dull = stubCtx(); paintPlant(dull, bare, 46, { tMs: 0, motion: 1 });
-  const lit = stubCtx(); paintPlant(lit, ripe, 46, { tMs: 0, motion: 1 });
-  assert.ok(lit.calls.length > dull.calls.length, 'a ripe plant looks no different');
-});
-
-test('watering leaves a mark: wet soil is drawn differently from dry', () => {
-  const dry = stubCtx(); paintSoil(dry, 40, 8, { wet: false });
-  const wet = stubCtx(); paintSoil(wet, 40, 8, { wet: true });
-  assert.deepEqual(dry.calls, wet.calls, 'wet soil should differ in colour, not in geometry');
-  assert.notEqual(FARM_PALETTE.mound, FARM_PALETTE.moundWet);
-});
-
-test('the shop can describe a seed it has no plot for', () => {
-  for (let level = 1; level <= MAX_LEVEL; level++) {
-    const desc = describeSeed(level);
-    assert.equal(desc.level, level);
-    assert.equal(desc.kind, FARM[level - 1].kind);
-    assert.equal(stageOf(desc), 'ripe', 'the shop should show the seed at its best');
-  }
-  assert.equal(describeSeed(999).level, 1, 'a nonsense seed still previews something');
-});
-
-// ── the ambient budget ─────────────────────────────────────────────────────
-//
-// The rule the whole farm screen is held to: INFORMATION holds still under
-// reduced motion, DECORATION disappears. Getting that backwards is how a
-// screen-reading player loses the only cue that a crop is ready, or how a
-// motion-sensitive player is left with a dot sitting on a hillside.
 
 test('fireflies are the evening only, and are simply gone when motion is off', () => {
   assert.equal(FARM_THEMES.light.firefly, null);
@@ -415,7 +539,7 @@ test('fireflies are the evening only, and are simply gone when motion is off', (
   assert.equal(dusk.depth, 0);
 });
 
-test('fireflies stay on the mountain and never stop moving', () => {
+test('fireflies are spread up the mountain and never stop moving', () => {
   const seen = new Set();
   for (const tMs of [0, 1500, 7000, 33000, 250000]) {
     const ctx = stubCtx();
@@ -425,92 +549,26 @@ test('fireflies stay on the mountain and never stop moving', () => {
   }
   // a closed-form loop draws the same COUNT every frame; what changes is where
   assert.equal(seen.size, 1, 'the firefly count wobbles frame to frame');
-});
-
-test('a plant sways and a ripe one bobs, and both hold perfectly still on request', () => {
-  const desc = { kind: 'bed', level: 2, progress: 1, mature: false, ripe: true };
-  const a = stubCtx(); paintPlant(a, desc, 46, { tMs: 0, motion: 0, seed: 5 });
-  const b = stubCtx(); paintPlant(b, desc, 46, { tMs: 987654, motion: 0, seed: 5 });
-  assert.deepEqual(a.calls, b.calls, 'the plant moved under reduced motion');
-  // and the glint is still lit, because it is information rather than decoration
-  assert.ok(a.calls.includes('fill'));
-  const moving = stubCtx(); paintPlant(moving, desc, 46, { tMs: 987654, motion: 1, seed: 5 });
-  assert.equal(moving.depth, 0, 'the sway leaked a save()');
-});
-
-test('every plot gets the same picture from the same seed, and a seed is optional', () => {
-  const desc = { kind: 'tree', level: 1, progress: 0.9, mature: true, ripe: true };
-  const once = stubCtx(); paintPlant(once, desc, 46, { tMs: 4321, motion: 1, seed: 12 });
-  const again = stubCtx(); paintPlant(again, desc, 46, { tMs: 4321, motion: 1, seed: 12 });
-  assert.deepEqual(once.calls, again.calls, 'the same plot drew itself two ways');
-  for (const seed of [undefined, null, NaN, 'twelve', -3, 1e9]) {
+  // and wherever the player has scrolled to, a few are out
+  const H = worldHeight();
+  for (const top of [0, H / 3, H - 690]) {
     const ctx = stubCtx();
-    paintPlant(ctx, desc, 46, { tMs: 4321, motion: 1, seed });
-    assert.ok(ctx.calls.length > 0);
-    assert.equal(ctx.depth, 0, `seed ${String(seed)} leaked a save()`);
+    paintFireflies(ctx, FARM_THEMES.dark, 5000, 1, { top, bottom: top + 690 });
+    assert.ok(ctx.calls.length >= 2, `no fireflies in the view at ${top}`);
   }
-});
-
-// ── time, made visible ─────────────────────────────────────────────────────
-
-test('the progress ring shows a gauge, and nothing at all at zero', () => {
-  const empty = stubCtx(); paintProgressRing(empty, 46, 0);
-  assert.equal(empty.calls.length, 0, 'a bubble appeared around a fresh sprig');
-  for (const p of [0.01, 0.5, 1]) {
-    const ctx = stubCtx();
-    paintProgressRing(ctx, 46, p);
-    assert.equal(ctx.calls.filter((c) => c === 'stroke').length, 2, `${p}: track and sweep`);
-    assert.equal(ctx.depth, 0);
-  }
-  // nonsense progress is clamped rather than thrown
-  for (const junk of [NaN, -5, Infinity, 'half', null]) {
-    const ctx = stubCtx();
-    paintProgressRing(ctx, 46, junk);
-    assert.equal(ctx.depth, 0, `progress ${String(junk)} leaked a save()`);
-  }
-});
-
-test('the countdown chip draws its own background so it reads over any crop', () => {
-  const ctx = stubCtx();
-  paintCountdown(ctx, '2:31', 46);
-  assert.ok(ctx.calls.includes('fill'), 'the chip has no chip');
-  assert.ok(ctx.calls.includes('text'), 'the chip has no time on it');
-  assert.equal(ctx.depth, 0);
-  assert.equal(ctx.globalAlpha, 1, 'the chip left the context dimmed');
-});
-
-test('the 种 hint is a hint: it breathes, and it holds still on request', () => {
-  const a = stubCtx(); paintPlantHint(a, 46, 0, 0);
-  const b = stubCtx(); paintPlantHint(b, 46, 987654, 0);
-  assert.deepEqual(a.calls, b.calls, 'the hint pulsed under reduced motion');
-  assert.ok(a.calls.includes('text'), 'the hint says nothing');
-  assert.equal(a.depth, 0);
-  assert.equal(a.globalAlpha, 1);
-});
-
-test('bare earth is drawn differently from earth with something in it', () => {
-  const planted = stubCtx(); paintSoil(planted, 40, 8, { wet: false });
-  const bare = stubCtx(); paintSoil(bare, 40, 8, { wet: false, bare: true });
-  assert.ok(bare.calls.length > planted.calls.length, 'bare ground still reads as a floorboard');
 });
 
 // ── the palette rule ───────────────────────────────────────────────────────
 
-test('the plant painter has no colour of its own outside FARM_PALETTE', () => {
-  const src = fs.readFileSync(path.join(ROOT, 'js/plant-art.js'), 'utf8');
-  const table = src.slice(src.indexOf('FARM_PALETTE = {'), src.indexOf('};', src.indexOf('FARM_PALETTE = {')));
-  const known = new Set(Object.values(FARM_PALETTE).map((c) => c.toLowerCase()));
-  for (const m of src.matchAll(/#[0-9a-f]{3,8}\b/gi)) {
-    if (table.includes(m[0])) continue;
-    assert.ok(known.has(m[0].toLowerCase()), `js/plant-art.js paints with a loose hex literal ${m[0]}`);
-  }
-});
-
 test('the mountainside has no colour of its own outside FARM_THEMES', () => {
   const src = fs.readFileSync(path.join(ROOT, 'js/farm-scene.js'), 'utf8');
   const end = src.indexOf('export function farmThemeOf');
-  const table = src.slice(0, end);
-  for (const m of src.slice(end).matchAll(/#[0-9a-f]{3,8}\b/gi)) {
-    assert.ok(table.includes(m[0]), `js/farm-scene.js paints with a loose hex literal ${m[0]}`);
+  const table = src.slice(src.indexOf('export const FARM_THEMES'), end);
+  for (const m of src.slice(end).matchAll(/#[0-9a-f]{3,8}\b|rgba?\([^)]*\)|hsla?\([^)]*\)/gi)) {
+    assert.fail(`js/farm-scene.js paints with a loose colour literal ${m[0]}`);
   }
+  assert.ok(table.length > 0);
+  // and nothing random or clock-driven: every frame is a function of its arguments
+  const code = src.replace(/\/\/.*$/gm, '');
+  assert.ok(!/Math\.random|Date\.now|performance\.now/.test(code), 'the scene reads a clock or a die of its own');
 });

@@ -59,6 +59,23 @@ These came out of the design conversation and are settled:
    friend for longer than their own morning takes. The clock is free play's own
    state, under a new `stalls` key; the campaign never sees it.
 
+   *Revised again (the free-form mountain).* Players found the farm short,
+   unclear and samey: four fixed plots a shelf with the one tree bench beside
+   the stream, and grown watermelons that bought every terrace in a day. The
+   farm is now ten terraces of six free-form tiles on a scrolling mountain;
+   trees and melons span two tiles; everything can be moved (growth intact),
+   dug up (back to the drawer) or cleared. Where a plant stands matters
+   (`js/terrain.js`): altitude band × soil moisture against each fruit's
+   preference, plus pond / beehive / compost / variety neighbour effects. This
+   deliberately relaxes §8's "no soil quality" — but only in the generous
+   direction: a poor spot is slower, never barren, and nothing dies. A farm
+   RANK earned by harvesting (`js/rank.js`) gates seeds, terraces and kit, and
+   the Almanac shows the whole ladder. The trellis is now part of the vine.
+   The merchant's premium tops out at ×3, and the tuning in §4 below is
+   superseded by `js/constants.js` (FARM, STRUCTURES, TUNING) and `RANKS`.
+   Saves migrate: farm v1 → v2 keeps every plant in left-to-right order, and
+   a v1 campaign is ranked up to whatever its farm already proves.
+
 And the design pillars the decisions rest on:
 
 - **Entertainment, not engagement.** No retention mechanics. Nothing rots,

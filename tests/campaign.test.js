@@ -10,8 +10,11 @@ import {
   crateSize, harvestInto, drawFromCrate, returnToCrate, countOf, totalCount, levelsIn,
   makeRunTally, noteMerges, rollSeedDrip,
   finishFirstRun, canBuyFarm, buyFarm, canGoToMarket, hasFarm, couldUseAHand,
+  rankOfCampaign, addXp, seedLock, terraceLock, structureLock, kitCount, addKit, takeKit, returnDug,
   serialize, restore,
 } from '../js/campaign.js';
+import { RANKS, xpForRank, rankForSeed, rankForTerrace } from '../js/rank.js';
+import { addTerrace, installSprinkler, makeFarm, serialize as serializeFarm } from '../js/farm.js';
 import { TUNING, MAX_LEVEL, PINEAPPLE_LEVEL } from '../js/constants.js';
 import { appraise } from '../js/economy.js';
 import { makeRng } from '../js/arcade-rng.js';
@@ -269,7 +272,7 @@ test('the first appraisal always buys the farm, and the farm opens the game', ()
   assert.equal(c.phase, 'open');
   assert.equal(c.cash, TUNING.firstRunFloor - TUNING.starterFarmCost);
   assert.ok(c.farm, 'no farm was handed over');
-  assert.equal(plotAt(c.farm, 0, 0).level, TUNING.starterTree);
+  assert.equal(plotAt(c.farm, 0, TUNING.starterTreeCol).level, TUNING.starterTree);
   for (const [level, n] of Object.entries(TUNING.starterSeeds)) {
     assert.equal(seedCount(c, Number(level)), n, `starter seeds for level ${level}`);
   }
@@ -343,15 +346,15 @@ test('a campaign round-trips through a save unchanged', () => {
   assert.deepEqual(unlockedLevels(back), [1, 2, 6]);
   assert.equal(crateSize(back), 12);
   assert.ok(back.farm, 'the farm did not ride along in the campaign save');
-  assert.equal(plotAt(back.farm, 0, 0).level, TUNING.starterTree);
+  assert.equal(plotAt(back.farm, 0, TUNING.starterTreeCol).level, TUNING.starterTree);
 });
 
 test('a farm mid-growth survives the save it was written in', () => {
   const c = openCampaign();
   const back = restore(serialize(c));
   // the starter tree was planted dry, so it is still waiting for its first drink
-  assert.ok(!isRipe(plotAt(back.farm, 0, 0)));
-  assert.equal(plotAt(back.farm, 0, 0).kind, 'tree');
+  assert.ok(!isRipe(plotAt(back.farm, 0, TUNING.starterTreeCol)));
+  assert.equal(plotAt(back.farm, 0, TUNING.starterTreeCol).kind, 'tree');
 });
 
 test('a save from another version restores nothing', () => {
@@ -440,11 +443,103 @@ test('a friend could use a hand only when there is genuinely nothing to do here'
   // everything picked and sold, and the orchard partway through its cycle
   const later = T0 + 30 * 60 * 1000;
   evaluateFarm(c.farm, later);
-  for (const { ti, pi, plot } of eachPlot(c.farm)) if (isRipe(plot)) harvest(c.farm, ti, pi, later);
+  for (const { ti, col, plot } of eachPlot(c.farm)) if (isRipe(plot)) harvest(c.farm, ti, col, later);
   c.crate = Object.create(null);
   assert.ok(couldUseAHand(c, later), 'the quiet farm offered the player nothing at all');
 
   // …and anything in the crate retires it at once: there is a trip to make
   harvestInto(c, { level: 1, count: 1 });
   assert.ok(!couldUseAHand(c, later), 'a full crate still pointed away from the farm');
+});
+
+// ── rank, the kit, and carrying older saves forward ────────────────────────
+
+test('picking fruit earns its face value in experience, and says when a rank is reached', () => {
+  const c = openCampaign();
+  assert.equal(c.xp, 0);
+  assert.equal(rankOfCampaign(c), 1);
+  const got = harvestInto(c, { level: 2, count: 6 });
+  assert.equal(got.xp, 12);
+  assert.equal(c.xp, 12);
+  assert.equal(got.rankUp, null);
+  const big = harvestInto(c, { level: 6, count: 5 });   // 160 XP: over the rank-2 line
+  assert.equal(big.rankUp, 2);
+  assert.equal(rankOfCampaign(c), 2);
+  assert.deepEqual(addXp(c, -50), { from: 2, to: 2 }, 'negative experience was banked');
+});
+
+test('a seed is on sale once it has been met at market AND the farm is ready for it', () => {
+  const c = openCampaign();
+  const apple = 6;
+  assert.equal(seedLock(c, apple), 'merge', 'sold a seed nobody has met');
+  noteMerges(c, makeRunTally(), [merge(apple)]);
+  assert.equal(seedLock(c, apple), 'rank', 'sold an orchard seed to a brand-new farm');
+  c.xp = xpForRank(rankForSeed(apple));
+  assert.equal(seedLock(c, apple), null);
+  assert.equal(seedLock(c, 1), null, 'the starter seed is locked');
+});
+
+test('terraces and structures wait for their rank', () => {
+  const c = openCampaign();
+  assert.equal(terraceLock(c, 1), rankForTerrace(1) > 1 ? 'rank' : null);
+  c.xp = RANKS[RANKS.length - 1].xp;
+  for (let i = 1; i < TUNING.terraceCosts.length; i++) assert.equal(terraceLock(c, i), null);
+  assert.equal(structureLock(c, 'pond'), null);
+  c.xp = 0;
+  assert.equal(structureLock(c, 'compost'), 'rank');
+});
+
+test('the kit hands out what it holds, and takes back what is dug up', () => {
+  const c = openCampaign();
+  assert.equal(kitCount(c, 'beehive'), 0);
+  assert.ok(!takeKit(c, 'beehive'), 'placed a beehive nobody bought');
+  assert.ok(addKit(c, 'beehive', 2));
+  assert.ok(takeKit(c, 'beehive'));
+  assert.equal(kitCount(c, 'beehive'), 1);
+  assert.ok(!addKit(c, 'windmill'), 'stocked something nobody sells');
+  assert.equal(returnDug(c, { kind: 'beehive', level: 0 }), 'beehive');
+  assert.equal(kitCount(c, 'beehive'), 2);
+  const before = seedCount(c, 6);
+  assert.equal(returnDug(c, { kind: 'tree', level: 6 }), 6);
+  assert.equal(seedCount(c, 6), before + 1, 'a dug-up tree did not go back in the drawer');
+  assert.equal(returnDug(c, null), null);
+});
+
+test('xp and the kit ride in the save, and a hostile kit is not believed', () => {
+  const c = openCampaign();
+  c.xp = 4321;
+  addKit(c, 'pond', 3);
+  const back = restore(JSON.parse(JSON.stringify(serialize(c))));
+  assert.equal(back.xp, 4321);
+  assert.equal(kitCount(back, 'pond'), 3);
+  const s = serialize(c);
+  s.kit = { pond: -2, beehive: 1.5, compost: 1e9, windmill: 4 };
+  s.xp = -7;
+  const junk = restore(s);
+  assert.equal(kitCount(junk, 'pond'), 0);
+  assert.equal(kitCount(junk, 'beehive'), 0);
+  assert.equal(kitCount(junk, 'compost'), 0);
+  assert.ok(junk.xp >= 0);
+});
+
+// A player from before ranks existed already owns terraces, sprinklers and
+// maybe the irrigation; they are carried up to the rank that farm proves, so
+// nobody is told they are too green for ground they already farm.
+test('a version-1 campaign keeps everything, and is ranked by the farm it already has', () => {
+  const farm = makeFarm();
+  for (let i = 0; i < 4; i++) addTerrace(farm, T0);
+  installSprinkler(farm, 2, T0);
+  const v1 = {
+    v: 1, phase: 'open', cash: 777, seeds: { 2: 3 }, unlocked: [1, 2, 6],
+    crate: { 1: 4 }, farm: { ...serializeFarm(farm), v: 1, terraces: serializeFarm(farm).terraces.map((t) => ({ ...t, plots: [] })) },
+    firstRunDone: true,
+  };
+  const c = restore(v1);
+  assert.ok(c, 'a v1 campaign was thrown away');
+  assert.equal(c.cash, 777);
+  assert.equal(seedCount(c, 2), 3);
+  assert.equal(c.farm.terraces.length, 5);
+  assert.ok(rankOfCampaign(c) >= rankForTerrace(4), 'demoted below the terraces it owns');
+  for (let i = 1; i < 5; i++) assert.equal(terraceLock(c, i), null);
+  assert.equal(serialize(c).v, 2);
 });

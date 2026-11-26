@@ -20,8 +20,9 @@
 
 import {
   FRUITS, MAX_LEVEL, ANNIHILATE_SCORE, scoreOf, bounceOf, farmOf, isPerennial,
-  growthOf, cycleOf, yieldOf, seedCostOf,
+  growthOf, cycleOf, yieldOf, seedCostOf, spanOf, seedRankOf,
 } from './constants.js';
+import { ALTITUDE_NAMES, MOISTURE_NAMES } from './terrain.js';
 import { mergeValue } from './economy.js';
 import { money, span } from './format.js';
 
@@ -64,6 +65,15 @@ export function chainNote(level) {
   return `${from} ${to}`;
 }
 
+// Where it grows best, in the terrain's own words (js/terrain.js).
+function likesWords(level) {
+  const row = farmOf(level);
+  const parts = [];
+  if (row.alt !== 'any') parts.push(ALTITUDE_NAMES[row.alt]);
+  if (row.water !== 'any') parts.push(MOISTURE_NAMES[row.water]);
+  return parts.length ? parts.join(' · ') : 'Anywhere 随处';
+}
+
 /**
  * One fruit's page, as rows.
  *
@@ -87,12 +97,14 @@ export function fruitStats(level, { seeds = 0, hasFarm = false } = {}) {
     ['At market 市场', `${money(mergeValue(level))}元`],
     ['Size 大小', `×${f.scale}`],
     ['Bounce 弹性', bounceWord(level)],
-    ['Grows 种法', KINDS[farmOf(level).kind] || '—'],
+    ['Grows 种法', `${KINDS[farmOf(level).kind] || '—'}${spanOf(level) > 1 ? ' · 2 tiles' : ''}`],
+    ['Likes 喜欢', likesWords(level)],
     ['First crop 头茬', span(growthOf(level))],
   ];
   if (perennial) rows.push(['Then every 周期', span(cycleOf(level))]);
   rows.push([`Harvest 收成`, `×${yieldOf(level)}`]);
   rows.push([perennial ? 'Sapling 树苗' : 'Seed 种子', `${money(seedCostOf(level))}元`]);
+  rows.push(['Farm rank 等级', `${seedRankOf(level)}`]);
   if (hasFarm) rows.push(['In the drawer 抽屉', `×${seeds}`]);
   return rows;
 }

@@ -125,10 +125,15 @@ test('the tier premium never dips as the fruit gets bigger', () => {
 // The two ends of the curve, which are the two things the design promises: a
 // cherry pair is not a feat and pays what a cherry is worth, and the fruit at
 // the top of the chain pays a multiple that makes the climb worth making.
+// The top of the curve is deliberately three times face rather than five: face
+// value already doubles a level, and a ×5 premium on top of it let two
+// farm-grown watermelons buy the whole mountain. Pinned from both sides.
 test('small fruit merge at face value; a watermelon merge pays several times its own', () => {
   assert.equal(mergeValue(2, 1), scoreOf(2), 'a cherry→strawberry merge charged a premium');
   assert.equal(mergeValue(3, 1), scoreOf(3));
-  assert.ok(mergeValue(MAX_LEVEL, 1) >= 4 * scoreOf(MAX_LEVEL),
+  assert.ok(mergeValue(MAX_LEVEL, 1) <= 3 * scoreOf(MAX_LEVEL),
+    `a watermelon merge pays ${mergeValue(MAX_LEVEL, 1)} — the premium is compounding again`);
+  assert.ok(mergeValue(MAX_LEVEL, 1) >= 3 * scoreOf(MAX_LEVEL),
     `a watermelon merge pays ${mergeValue(MAX_LEVEL, 1)} against ${scoreOf(MAX_LEVEL)} face`);
 });
 

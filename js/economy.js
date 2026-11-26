@@ -11,7 +11,7 @@
 // the economy entirely.
 
 import {
-  TUNING, MAX_LEVEL, MAX_TERRACES, ANNIHILATE_SCORE, scoreOf, seedCostOf,
+  TUNING, MAX_LEVEL, MAX_TERRACES, ANNIHILATE_SCORE, STRUCTURES, scoreOf, seedCostOf,
 } from './constants.js';
 
 // Endings that count as putting the stall away neatly. Topping out is never
@@ -138,12 +138,23 @@ export const EQUIPMENT = {
   farm: TUNING.starterFarmCost,
   sprinkler: TUNING.sprinklerCost,
   irrigation: TUNING.irrigationCost,
-  trellis: TUNING.trellisCost,
-  fertilizer: TUNING.fertilizerCost,
 };
 
 export function priceOfEquipment(what) {
   return Object.prototype.hasOwnProperty.call(EQUIPMENT, what) ? EQUIPMENT[what] : null;
+}
+
+// A pond, a beehive, a compost heap.
+export function priceOfStructure(kind) {
+  return Object.prototype.hasOwnProperty.call(STRUCTURES, kind) ? STRUCTURES[kind].cost : null;
+}
+
+// Fertilizer for the crop it is spent on: a share of that crop's seed price,
+// never less than the floor. A flat price was a rounding error on a watermelon
+// and a luxury on a strawberry.
+export function priceOfFertilizer(level) {
+  if (!Number.isInteger(level) || level < 1 || level > MAX_LEVEL) return null;
+  return Math.max(TUNING.fertilizerMin, Math.round(seedCostOf(level) * TUNING.fertilizerShare));
 }
 
 // Trivial by design, and that is the point: hosts stay arithmetic-free, and

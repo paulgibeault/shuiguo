@@ -657,6 +657,113 @@ button.big {
 .campaign-hud button.icon { padding: 0.4rem 0.7rem; }
 .campaign-hud .stat { min-width: 3.5rem; }
 
+/* The farm's HUD wraps: the action row, then the rank strip under it at full
+ * width. The strip is a button — it opens the Almanac — but it reads as a
+ * gauge first: rank and title, a bar, and in one line what the next rank opens. */
+#farm-hud { flex-wrap: wrap; row-gap: 0.35rem; }
+.campaign-hud .rank-strip {
+  flex: 1 0 100%;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.2rem;
+  padding: 0.35rem 0.7rem 0.4rem;
+  border-radius: 0.7rem;
+  border-width: 1.5px;
+  text-align: left;
+  white-space: normal;
+  box-shadow: 0 2px 0 var(--shadow);
+}
+.rank-strip[hidden] { display: none; }
+.rank-top { display: flex; justify-content: space-between; align-items: baseline; gap: 0.5rem; }
+.rank-top b { font-size: 0.85rem; }
+.rank-book { font-size: 0.68rem; opacity: 0.6; white-space: nowrap; }
+.rank-bar {
+  display: block;
+  height: 0.45rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--ink) 12%, transparent);
+  overflow: hidden;
+}
+.rank-bar i {
+  display: block;
+  height: 100%;
+  width: 0;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #8fbf5a, #d8c34a);
+  transition: width 0.6s ease-out;
+}
+.rank-next { font-size: 0.7rem; opacity: 0.75; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rank-strip.flash { animation: rank-flash 1.4s ease-out; }
+@keyframes rank-flash {
+  0% { box-shadow: 0 0 0 0 rgba(255, 217, 122, 0.9); transform: scale(1.03); }
+  100% { box-shadow: 0 0 0 14px rgba(255, 217, 122, 0); transform: scale(1); }
+}
+
+/* Over the farm canvas: the bulk verbs at the foot, the move banner at the
+ * head. The holder itself never takes a pointer — only its buttons do — so a
+ * drag that starts beside them still scrolls the mountain. */
+.farm-tools {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 0.5rem;
+}
+.farm-tools[hidden] { display: none; }
+.farm-tools button { pointer-events: auto; }
+.farm-tools .bulk {
+  margin-top: auto;
+  display: flex;
+  justify-content: center;
+  gap: 0.5rem;
+  padding-bottom: env(safe-area-inset-bottom);
+}
+.farm-tools .bulk button { font-size: 0.85rem; padding: 0.45rem 1rem; }
+.farm-tools button[hidden] { display: none; }
+.move-banner {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.45rem 0.5rem 0.45rem 0.8rem;
+  border-radius: 0.8rem;
+  background: color-mix(in srgb, var(--paper) 92%, transparent);
+  box-shadow: 0 3px 12px var(--shadow);
+  font-size: 0.8rem;
+}
+.move-banner[hidden] { display: none; }
+.move-banner span { flex: 1; }
+.move-banner button { font-size: 0.8rem; padding: 0.3rem 0.8rem; }
+
+/* The Almanac: every rank, what it takes, what it opens. */
+.almanac {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  max-width: 26rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+.almanac li {
+  padding: 0.45rem 0.75rem;
+  border-radius: 0.7rem;
+  border: 1.5px solid color-mix(in srgb, var(--wood-edge) 35%, transparent);
+  background: color-mix(in srgb, var(--card) 70%, transparent);
+}
+.almanac li.done { opacity: 0.55; }
+.almanac li.here {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, var(--card));
+}
+.almanac li.ahead { opacity: 0.9; }
+.almanac-head { display: flex; justify-content: space-between; gap: 0.5rem; font-size: 0.88rem; }
+.almanac-head span { opacity: 0.6; font-variant-numeric: tabular-nums; font-size: 0.75rem; }
+.almanac-unlocks { font-size: 0.72rem; opacity: 0.8; margin-top: 0.1rem; }
+
 /* The crate-count pill, on the farm HUD's Market button and the map's Market
  * spot alike. Both carry the same number for the same reason: the crate IS the
  * ticket to market, and the count is whether the trip is worth making. */
@@ -814,6 +921,13 @@ button.big {
   overflow-y: auto;
 }
 .sheet.bottom h2 { font-size: 1.3rem; }
+/* A drawer taller than the screen must scroll from its TOP: anchoring the
+ * content to the bottom with flex-end pushed the overflow off the top edge,
+ * where no scroll could reach it (the title and the note went with it). The
+ * first child soaks up the free space instead, which sits a short drawer at
+ * the bottom exactly as before. */
+.sheet.bottom { justify-content: flex-start; }
+.sheet.bottom > :first-child { margin-top: auto; }
 .shop-head {
   font-size: 0.68rem;
   text-transform: uppercase;

@@ -163,53 +163,57 @@ export const PHYS = {
 // A fruit's SALE value is its existing `score` (face value). What the farm adds
 // is how it is grown:
 //
-//   kind      'bed'  annual — plant a seed, grow once, harvest, plot empties
+//   kind      'bed'  annual — plant a seed, grow once, harvest, ground empties
 //             'tree' perennial — matures once, then fruits on a cycle forever
-//             'vine' perennial that additionally needs a trellis on the plot
+//             'vine' perennial grown up a trellis (the trellis comes with it)
+//   span      how many tiles of terrace it takes. A tree's crown and a melon's
+//             sprawl are two tiles wide; everything else is one. Span is what
+//             makes laying out a terrace a decision rather than a fill.
 //   growthMs  time from planting to the FIRST ripe crop
 //   cycleMs   perennials: time from harvest to ripe again. null for annuals.
 //             Faster than growthMs for every tree the player PLANTS — raising
 //             one is the investment, and the crops after it are the return.
 //             The cherry is the exception, and it is the only tree nobody
-//             plants: it comes with the farm, already grown by somebody else,
-//             so its first crop lands sooner than its steady cycle.
+//             plants first: it comes with the farm, already grown by somebody
+//             else, so its first crop lands sooner than its steady cycle.
 //   yield     fruit per harvest, dropped into the crate
 //   cost      元 for one seed (bed) or sapling (tree/vine)
+//   rank      the farm rank (js/rank.js) at which the shop will sell it
+//   alt       the altitude it likes: 'low' warm valley terraces, 'mid', 'high'
+//             cool ridge terraces, or 'any'
+//   water     the soil it likes: 'wet' by the stream, 'damp', 'dry' far from
+//             it, or 'any'
+//
+// Where things like to grow is lifted from where Taiwan actually grows them:
+// pineapples, melons and watermelons on the warm lowland, strawberries and
+// persimmons on the middle hills, and apples, pears and peaches up on the cool
+// high-mountain farms. Nothing ever fails to grow anywhere — a poor spot is
+// slower, a perfect one is faster and fuller (js/terrain.js) — but the mountain
+// is no longer the same shelf six times over.
 //
 // Deliberate shape: small fruit are cheap, fast and generous; big fruit are
 // capital. Pineapple is the outlier and the game's one running joke — real
 // ones take two years, so this one takes a day.
 //
 // The generosity floor (pinned by tests/fruits): an ANNUAL always clears its
-// seed in the single harvest it lives for, and a PERENNIAL clears its sapling
-// within a handful of cycles and is free forever after. The big beds run at a
-// steady 1.28× return per planting (pineapple 512/400, melon 1024/800,
-// watermelon 2048/1600) — which is why the watermelon plant bears two.
+// seed at face value in the single harvest it lives for, and a PERENNIAL clears
+// its sapling within a handful of cycles and is free forever after.
 const MIN = 60 * 1000;
 const HOUR = 60 * MIN;
 
-// The first ten minutes are their own design problem. A player who has just
-// bought a farm, planted it and watered it has nothing left to do, and the two
-// starter crops are the whole of what they are waiting on — so those two are
-// paced to the first session and everything from the grape up is left alone,
-// because the long waits ARE the come-back-later texture.
-//
-// For a perennial `growthMs` is already the one-time planting-to-first-crop
-// wait and `cycleMs` the steady state, so the cherry can pay off fast the first
-// time without touching how the orchard runs afterwards. No new column needed.
 export const FARM = [
   // level is index+1, matching FRUITS.
-  { kind: 'tree', growthMs:  2 * MIN,  cycleMs:  4 * MIN,  yield: 12, cost:   60 }, // cherry
-  { kind: 'bed',  growthMs: 90 * 1000, cycleMs: null,      yield:  6, cost:    6 }, // strawberry
-  { kind: 'vine', growthMs:  6 * MIN,  cycleMs:  5 * MIN,  yield:  8, cost:   25 }, // grape
-  { kind: 'tree', growthMs: 12 * MIN,  cycleMs:  8 * MIN,  yield:  6, cost:   90 }, // dekopon
-  { kind: 'tree', growthMs: 20 * MIN,  cycleMs: 12 * MIN,  yield:  5, cost:  150 }, // persimmon
-  { kind: 'tree', growthMs: 40 * MIN,  cycleMs: 25 * MIN,  yield:  4, cost:  300 }, // apple
-  { kind: 'tree', growthMs: 90 * MIN,  cycleMs: 45 * MIN,  yield:  4, cost:  550 }, // pear
-  { kind: 'tree', growthMs:  3 * HOUR, cycleMs: 90 * MIN,  yield:  3, cost: 1000 }, // peach
-  { kind: 'bed',  growthMs: 24 * HOUR, cycleMs: null,      yield:  2, cost:  400 }, // pineapple
-  { kind: 'bed',  growthMs:  5 * HOUR, cycleMs: null,      yield:  2, cost:  800 }, // melon
-  { kind: 'bed',  growthMs:  8 * HOUR, cycleMs: null,      yield:  2, cost: 1600 }, // watermelon
+  { kind: 'tree', span: 2, growthMs:  2 * MIN,  cycleMs:  5 * MIN,  yield: 10, cost:   40, rank: 1, alt: 'any',  water: 'damp' }, // cherry
+  { kind: 'bed',  span: 1, growthMs:  2 * MIN,  cycleMs: null,      yield:  6, cost:    4, rank: 1, alt: 'mid',  water: 'wet'  }, // strawberry
+  { kind: 'vine', span: 1, growthMs:  8 * MIN,  cycleMs:  6 * MIN,  yield:  6, cost:   40, rank: 2, alt: 'low',  water: 'dry'  }, // grape
+  { kind: 'tree', span: 2, growthMs: 15 * MIN,  cycleMs: 12 * MIN,  yield:  6, cost:   90, rank: 3, alt: 'low',  water: 'damp' }, // dekopon
+  { kind: 'tree', span: 2, growthMs: 30 * MIN,  cycleMs: 20 * MIN,  yield:  5, cost:  180, rank: 4, alt: 'mid',  water: 'dry'  }, // persimmon
+  { kind: 'tree', span: 2, growthMs: 60 * MIN,  cycleMs: 40 * MIN,  yield:  5, cost:  350, rank: 5, alt: 'high', water: 'damp' }, // apple
+  { kind: 'tree', span: 2, growthMs:  2 * HOUR, cycleMs: 90 * MIN,  yield:  4, cost:  700, rank: 6, alt: 'high', water: 'wet'  }, // pear
+  { kind: 'tree', span: 2, growthMs:  4 * HOUR, cycleMs:  3 * HOUR, yield:  4, cost: 1400, rank: 7, alt: 'high', water: 'dry'  }, // peach
+  { kind: 'bed',  span: 1, growthMs: 24 * HOUR, cycleMs: null,      yield:  2, cost:  300, rank: 8, alt: 'low',  water: 'dry'  }, // pineapple
+  { kind: 'bed',  span: 2, growthMs:  6 * HOUR, cycleMs: null,      yield:  2, cost:  900, rank: 8, alt: 'low',  water: 'damp' }, // melon
+  { kind: 'bed',  span: 2, growthMs: 10 * HOUR, cycleMs: null,      yield:  2, cost: 1800, rank: 9, alt: 'low',  water: 'wet'  }, // watermelon
 ];
 
 // The pineapple takes longer than fruit worth four times as much, and that is
@@ -220,14 +224,37 @@ export const PINEAPPLE_LEVEL = 9;
 
 export function farmOf(level) { return FARM[level - 1]; }
 export function isPerennial(level) { return FARM[level - 1].kind !== 'bed'; }
+// A vine is grown up a trellis. It is no longer a separate purchase — the
+// trellis comes with the sapling and goes wherever the vine goes — but the
+// painter still needs to know to draw one.
 export function needsTrellis(level) { return FARM[level - 1].kind === 'vine'; }
 export function growthOf(level) { return FARM[level - 1].growthMs; }
 export function cycleOf(level) { return FARM[level - 1].cycleMs; }
 export function yieldOf(level) { return FARM[level - 1].yield; }
 export function seedCostOf(level) { return FARM[level - 1].cost; }
+export function spanOf(level) { return FARM[level - 1].span; }
+export function seedRankOf(level) { return FARM[level - 1].rank; }
 
-// Every balance knob in the campaign, in one place. WP11 tunes these numbers;
-// nothing else in the campaign carries a magic constant of its own.
+// ── things that are not plants ─────────────────────────────────────────────
+//
+// Each takes one tile, is bought into the drawer, and can be placed, moved or
+// taken back up as freely as a plant — they are what makes WHERE you put
+// things matter. Their effects reach the tiles either side of them on the same
+// terrace (js/terrain.js), so a beehive between two trees helps both.
+//
+//   pond     the ground beside it is wet, however far from the stream
+//   beehive  plants beside it bear more fruit
+//   compost  plants beside it grow faster
+export const STRUCTURES = {
+  pond:    { name: 'Pond',     hanzi: '池塘', cost: 1500, rank: 5, note: 'Wets the ground beside it' },
+  beehive: { name: 'Beehive',  hanzi: '蜂箱', cost:  400, rank: 3, note: 'Neighbours bear more fruit' },
+  compost: { name: 'Compost',  hanzi: '堆肥', cost:  800, rank: 6, note: 'Neighbours grow faster' },
+};
+export const STRUCTURE_KINDS = Object.keys(STRUCTURES);
+export function isStructure(kind) { return Object.prototype.hasOwnProperty.call(STRUCTURES, kind); }
+
+// Every balance knob in the campaign, in one place. Nothing else in the
+// campaign carries a magic constant of its own.
 //
 // Generosity-first: `firstRunFloor` exceeds `starterFarmCost` by a seed budget,
 // so the first appraisal always buys the farm AND something to plant in it —
@@ -237,30 +264,37 @@ export const TUNING = {
   firstRunFloor: 700,          // floor on the FIRST appraisal only
   starterFarmCost: 500,        // terrace 1 + a young cherry tree + 4 strawberry seeds
   starterSeeds: { 2: 4 },      // what the starter farm comes planted-ready with
-  starterTree: 1,              // …and the sapling already in its tree plot
+  starterTree: 1,              // …and the tree already standing on it
+  starterTreeCol: 2,           // in the MIDDLE of the shelf: trees are not a stream thing
+  starterTreeProgress: 0.6,    // a YOUNG tree, not a seed: it should look like one on arrival
   // …and one bed that comes with the farm already half grown and watered. The
   // tree teaches the ritual (it arrives thirsty, so the first tap is a
   // watering); this one keeps its promise while that lesson is still warm,
   // instead of leaving the new farm three minutes of nothing.
   starterCrop: 2,
+  starterCropCol: 0,
   starterCropProgress: 0.5,
-  terraceCosts: [0, 500, 1200, 3000, 7500, 18000],  // index 0 is the starter terrace
-  plotsPerTerrace: 4,
-  treePlotsPerTerrace: 1,      // one of the four takes a tree/vine; the rest are beds
+  // Ten shelves up the mountain. Each is gated by farm RANK as well as by cash
+  // (js/rank.js) — the money says you can afford it, the rank says you know
+  // what to do with it — and the price climbs about as fast as a terrace of the
+  // crops that rank unlocks earns, so every shelf is a goal and none is a wall.
+  terraceCosts: [0, 300, 800, 2000, 4500, 9000, 18000, 32000, 55000, 90000],
+  terraceRanks: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+  tilesPerTerrace: 6,
   // ── the merchant's curve ────────────────────────────────────────────────
   // What a MERGE fetches at market, as a multiple of the fruit's face value.
   // Campaign only: FRUITS[].score is the arcade table and stays arcade pride.
   //
-  // The problem it fixes: a pear built from scratch banked ~126元 of cumulative
-  // merge score against 64元 of face value, so merging roughly doubled a fruit's
-  // worth while the effort curve to reach it was far steeper. Small fruit
-  // therefore pay face — merging two cherries is not a feat — and the premium
+  // Small fruit pay face — merging two cherries is not a feat — and the premium
   // opens up from the dekopon so that deep merging is what a market day is FOR.
   //
-  // One entry per level, monotonically non-decreasing (pinned by
-  // tests/economy). Fruit left unmerged on the counter never sees any of this:
-  // it sells at face, which is the whole point of the premium.
-  tierPremium: [1, 1, 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5],
+  // It used to open up to ×5, and that was the campaign's balance problem: two
+  // farm-grown watermelons dropped side by side annihilated for 10,240元, which
+  // bought every terrace on the mountain twice over a day after the first
+  // watermelon was planted. Face value already doubles per level; the premium
+  // only has to tilt that, not compound it. Monotonically non-decreasing
+  // (pinned by tests/economy).
+  tierPremium: [1, 1, 1, 1.25, 1.5, 1.75, 2, 2.25, 2.5, 2.75, 3],
   // …and what a combo adds on top, per link past the first. A 4-chain pays
   // ×1.45. Deliberately a bonus rather than the main course: chains are luck
   // steered by skill, and the tier table is the part the player chooses.
@@ -283,10 +317,24 @@ export const TUNING = {
                                // a watering always covers at least the rest of
                                // the current stage, so no crop is ever a
                                // come-back-and-top-it-up treadmill
-  sprinklerCost: 800,          // per terrace: that terrace is watered forever
-  irrigationCost: 8000,        // whole farm, forever — the "made it" purchase
-  trellisCost: 300,            // per plot, enables vines
-  fertilizerCost: 50,          // consumable: halves the remaining stage time
+  sprinklerCost: 1200,         // per terrace: that terrace is watered forever
+  sprinklerRank: 4,
+  irrigationCost: 50000,       // whole farm, forever — the "made it" purchase
+  irrigationRank: 9,
+  // Fertilizer halves what is left of a stage, and is priced off the crop it is
+  // spent on — a flat price made it a rounding error on a watermelon and a
+  // luxury on a strawberry.
+  fertilizerShare: 0.25,       // of the crop's seed price …
+  fertilizerMin: 15,           // … but never less than this
+  // ── the lie of the land (js/terrain.js) ────────────────────────────────
+  // How a spot's fit for a crop changes its growing. The grade is the sum of
+  // the altitude and soil matches, −2..+2. Faster is a multiplier on growth;
+  // a POOR spot is only ever slower, never barren — nothing fails here.
+  gradeSpeed: { '-2': 0.7, '-1': 0.85, 0: 1, 1: 1.15, 2: 1.35 },
+  idealYieldBonus: 0.25,       // an ideal spot bears this fraction more (floored)
+  beeYieldBonus: 0.25,         // …and so does a plant beside a beehive
+  compostSpeed: 0.2,           // growth beside compost
+  varietySpeed: 0.05,          // per DIFFERENT neighbouring crop, at most two
 };
 
 export const MAX_TERRACES = TUNING.terraceCosts.length;
