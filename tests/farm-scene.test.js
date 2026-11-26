@@ -11,7 +11,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   FARM_ART, FARM_THEMES, farmThemeOf, forSaleBox, terracePriceBox, altitudeMarkerBox,
-  fogBands, lanternSpots,
+  fogBands, lanternSpots, streamPool,
   paintFarmSky, paintSky, paintRidges, paintHillside, paintStream, paintTerrace, paintFoot,
   paintForSale, paintTerracePrice, paintAltitudeMarkers, paintFog, paintFireflies, paintLanterns,
 } from '../js/farm-scene.js';
@@ -254,6 +254,35 @@ test('every terrace carries the stream across it, over its wall', () => {
   const a = stubCtx(); paintTerrace(a, FARM_THEMES.light, 3, true, { tMs: 0, motion: 0 });
   const b = stubCtx(); paintTerrace(b, FARM_THEMES.light, 3, true, { tMs: 98765, motion: 0 });
   assert.deepEqual(a.calls, b.calls, 'the fall ran under reduced motion');
+});
+
+// Lake → run → pool → drop. The pool sits on the shelf at the lip of the fall,
+// wider than the stream that feeds it, and never reaches under a tile.
+test('the stream pools on every shelf before it drops, clear of the tiles', () => {
+  for (let i = 0; i < MAX_TERRACES; i++) {
+    const c = streamCrossing(i);
+    const p = streamPool(i);
+    assert.ok(p.x >= c.lo - 3 - 0.01 && p.x + p.w <= c.hi + 3 + 0.01, `terrace ${i}'s pool spills past its crossing`);
+    assert.ok(p.bottom <= c.y + 1 && p.bottom >= c.y - 2, `terrace ${i}'s pool is not on the lip`);
+    assert.ok(p.top < c.y - LAYOUT.soilH, `terrace ${i}'s pool does not reach up the slope`);
+    for (let col = 0; col < LAYOUT.cols; col++) {
+      const t = layout.tileGeom(i, col);
+      assert.ok(t.x + t.w <= p.x + 1.5 || t.x >= p.x + p.w - 1.5, `terrace ${i} tile ${col} stands in the pool`);
+    }
+  }
+});
+
+test('the stream comes down from a lake, which holds still without motion', () => {
+  for (const th of Object.values(FARM_THEMES)) {
+    for (const k of ['lake', 'lakeDeep', 'lakeFar', 'lakeSheen', 'lakeShore', 'reed', 'poolDeep']) assert.ok(th[k], `${th.id} has no ${k}`);
+    const r = stubCtx(); paintRidges(r, th);
+    assert.ok(r.calls.filter((c) => c === 'fill').length >= 8, 'the lake is missing from the far hills');
+    const still = stubCtx(); paintStream(still, th, 0, 0, { top: 0, bottom: 300 });
+    const later = stubCtx(); paintStream(later, th, 77777, 0, { top: 0, bottom: 300 });
+    assert.deepEqual(still.calls, later.calls, 'the lake shimmered under reduced motion');
+    const moving = stubCtx(); paintStream(moving, th, 77777, 1, { top: 0, bottom: 300 });
+    assert.ok(moving.calls.length > still.calls.length, 'the lake never catches the light');
+  }
 });
 
 test('the plumbing runs along the tiles and never across the water', () => {
