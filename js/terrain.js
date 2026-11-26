@@ -9,8 +9,8 @@
 //
 //   altitude  the bottom shelves are warm valley ground, the top ones cool
 //             ridge; which band a terrace is in is a fact about the mountain
-//   moisture  the stream runs down the left, so the tiles beside it are wet
-//             and the far end of every shelf is dry
+//   moisture  the stream crosses every shelf, so the tiles beside it are wet
+//             and the ones furthest from it are dry
 //
 // and three are made by what stands NEXT to it, on the same shelf:
 //
@@ -23,7 +23,8 @@
 // spot on the mountain grows a crop slower, never fails it. Nothing here can
 // stop a plant from ripening.
 
-import { TUNING, MAX_TERRACES, farmOf, yieldOf, isStructure } from './constants.js';
+import { MAX_TERRACES, TUNING, farmOf, yieldOf, isStructure } from './constants.js';
+import { streamCrossing, tileGeom } from './farm-layout.js';
 
 export const ALTITUDES = ['low', 'mid', 'high'];
 export const MOISTURES = ['dry', 'damp', 'wet'];
@@ -50,13 +51,19 @@ export function altitudeOf(ti) {
   return 'high';
 }
 
-// The stream is on the left: the two tiles beside it are wet, the middle two
-// damp, the far two dry. Scaled to the column count rather than written as
-// three pairs, so a wider shelf is still a gradient.
-export function baseMoistureOf(col) {
-  const cols = TUNING.tilesPerTerrace;
-  const band = Math.min(2, Math.floor((col / cols) * 3));
-  return MOISTURES[2 - band];
+// Soil is wettest beside the stream and dries out with distance from it. The
+// stream crosses every shelf (js/farm-layout.js), so "beside the stream" is a
+// measure along the shelf from the water's edge to the tile's nearest edge:
+// within about a tile and a bit is wet, within about three is damp, and past
+// that the ground is dry.
+const WET_WITHIN = 60;
+const DAMP_WITHIN = 150;
+
+export function baseMoistureOf(ti, col) {
+  const { lo, hi } = streamCrossing(ti);
+  const t = tileGeom(ti, col);
+  const d = Math.max(0, lo - (t.x + t.w), t.x - hi);
+  return d < WET_WITHIN ? 'wet' : d < DAMP_WITHIN ? 'damp' : 'dry';
 }
 
 // ── what is next to what ───────────────────────────────────────────────────
@@ -77,20 +84,20 @@ export function neighboursOf(terrace, col, span, ignore) {
 
 // A tile's soil once ponds are counted. A pond wets the tiles either side of
 // it; the pond's own tile is water, not soil, and nothing grows there.
-export function moistureAt(terrace, col, ignore) {
+export function moistureAt(terrace, ti, col, ignore) {
   for (const p of terrace.plots) {
     if (p === ignore || p.kind !== 'pond') continue;
     if (col === p.col - 1 || col === p.col + p.span) return 'wet';
   }
-  return baseMoistureOf(col);
+  return baseMoistureOf(ti, col);
 }
 
 // The soil a plant `span` wide drinks from: the wettest of its tiles. Roots go
 // where the water is, and it keeps the rule to one sentence.
-export function moistureFor(terrace, col, span, ignore) {
+export function moistureFor(terrace, ti, col, span, ignore) {
   let best = 0;
   for (let c = col; c < col + span; c++) {
-    best = Math.max(best, MOISTURES.indexOf(moistureAt(terrace, c, ignore)));
+    best = Math.max(best, MOISTURES.indexOf(moistureAt(terrace, ti, c, ignore)));
   }
   return MOISTURES[best];
 }
@@ -120,7 +127,7 @@ export function fitOf(farm, ti, col, level, ignore) {
   const row = farmOf(level);
   const span = row.span;
   const altitude = altitudeOf(ti);
-  const moisture = moistureFor(terrace, col, span, ignore);
+  const moisture = moistureFor(terrace, ti, col, span, ignore);
   const grade = match(row.alt, altitude, ALTITUDES) + match(row.water, moisture, MOISTURES);
 
   const near = neighboursOf(terrace, col, span, ignore);

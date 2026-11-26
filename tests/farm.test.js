@@ -16,7 +16,8 @@ import {
   isRipe, isPlant, stageMsOf, progressOf, msUntilRipe, msUntilRipeAt, msUntilNextRipe, soonestRipening, ripeCount,
   serialize, restore,
 } from '../js/farm.js';
-import { fitOf } from '../js/terrain.js';
+import { fitOf, baseMoistureOf } from '../js/terrain.js';
+import { streamCrossing, tileGeom } from '../js/farm-layout.js';
 import {
   TUNING, MAX_TERRACES, MAX_LEVEL, farmOf, growthOf, cycleOf, yieldOf, spanOf, STRUCTURE_KINDS,
 } from '../js/constants.js';
@@ -286,6 +287,16 @@ test('the worst spot on the mountain is slower, never barren', () => {
       assert.ok(fit.speed > 0.5, `level ${level} at ${col} grows at ${fit.speed}`);
       assert.ok(fit.yield >= yieldOf(level), `level ${level} at ${col} bears less than the table`);
     }
+  }
+});
+
+test('the ground is wettest beside the stream and dries out away from it', () => {
+  for (let ti = 0; ti < MAX_TERRACES; ti++) {
+    const { x } = streamCrossing(ti);
+    const byDistance = [...Array(COLS).keys()].sort((a, b) =>
+      Math.abs(tileGeom(ti, a).cx - x) - Math.abs(tileGeom(ti, b).cx - x));
+    assert.equal(baseMoistureOf(ti, byDistance[0]), 'wet', `terrace ${ti + 1}: the bank tile is not wet`);
+    assert.equal(baseMoistureOf(ti, byDistance[COLS - 1]), 'dry', `terrace ${ti + 1}: the far tile is not dry`);
   }
 });
 

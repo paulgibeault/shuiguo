@@ -16,7 +16,7 @@ import {
   paintForSale, paintTerracePrice, paintAltitudeMarkers, paintFog, paintFireflies, paintLanterns,
 } from '../js/farm-scene.js';
 import * as layout from '../js/farm-layout.js';
-import { LAYOUT, groundYOf, groundYAt, terraceGeom, worldHeight } from '../js/farm-layout.js';
+import { LAYOUT, groundYOf, groundYAt, terraceGeom, worldHeight, streamCrossing } from '../js/farm-layout.js';
 import { altitudeOf } from '../js/terrain.js';
 import { TUNING, MAX_TERRACES } from '../js/constants.js';
 
@@ -222,12 +222,55 @@ test('a terrace wall follows its own contour, end to end', () => {
     paintTerrace(ctx, FARM_THEMES.light, i, true, {});
     const t = terraceGeom(i);
     // the soil band's front edge: the points that sit exactly on the ground line
-    const on = pts.filter(([x, y]) => x >= t.left && x <= Math.min(t.right, LAYOUT.width) &&
-      Math.abs(y - groundYAt(i, x)) < 0.01);
-    assert.ok(on.length > 20, `terrace ${i} has only ${on.length} points on its contour`);
+    const on = pts.filter(([x, y]) => Math.abs(y - groundYAt(i, x)) < 0.01);
+    assert.ok(on.length > 40, `terrace ${i} has only ${on.length} points on its contour`);
     const xs = on.map(([x]) => x);
-    assert.ok(Math.min(...xs) <= t.left + 1, `terrace ${i} starts short of the stream`);
-    assert.ok(Math.max(...xs) >= Math.min(t.right, LAYOUT.width) - 7, `terrace ${i} stops short of its end`);
+    // edge to edge: no shelf ends in view
+    assert.ok(Math.min(...xs) <= t.left, `terrace ${i} stops short of the left edge`);
+    assert.ok(Math.max(...xs) >= t.right, `terrace ${i} stops short of the right edge`);
+  }
+});
+
+// The stream crosses every shelf, and the crossing is drawn as part of the
+// terrace — after the wall — so the fall is on top of the stones it runs down.
+test('every terrace carries the stream across it, over its wall', () => {
+  for (let i = 0; i < MAX_TERRACES; i++) {
+    const c = streamCrossing(i);
+    const fills = [];
+    const ctx = stubCtx();
+    let style = '';
+    Object.defineProperty(ctx, 'fillStyle', { get: () => style, set: (v) => { style = v; } });
+    const fill = ctx.fill;
+    ctx.fill = () => { fills.push(style); fill(); };
+    paintTerrace(ctx, FARM_THEMES.light, i, true, {});
+    const th = FARM_THEMES.light;
+    const lastStone = fills.lastIndexOf(th.stone);
+    assert.ok(lastStone >= 0);
+    assert.ok(fills.lastIndexOf(th.streamLight) > lastStone, `terrace ${i}'s fall is under its wall`);
+    assert.ok(fills.lastIndexOf(th.stream) > lastStone, `terrace ${i} has no channel over its shelf`);
+    assert.ok(c.hi > c.lo);
+  }
+  // and still, without a clock; running, with one
+  const a = stubCtx(); paintTerrace(a, FARM_THEMES.light, 3, true, { tMs: 0, motion: 0 });
+  const b = stubCtx(); paintTerrace(b, FARM_THEMES.light, 3, true, { tMs: 98765, motion: 0 });
+  assert.deepEqual(a.calls, b.calls, 'the fall ran under reduced motion');
+});
+
+test('the plumbing runs along the tiles and never across the water', () => {
+  for (let i = 0; i < MAX_TERRACES; i++) {
+    const c = streamCrossing(i);
+    const pts = [];
+    const ctx = stubCtx();
+    let stroke = '';
+    Object.defineProperty(ctx, 'strokeStyle', { get: () => stroke, set: (v) => { stroke = v; } });
+    const lineTo = (x, y) => { if (stroke === FARM_THEMES.light.pipe || stroke === FARM_THEMES.light.streamDark) pts.push([x, y]); };
+    ctx.lineTo = lineTo; ctx.moveTo = lineTo;
+    paintTerrace(ctx, FARM_THEMES.light, i, true, { sprinkler: true, irrigated: true });
+    assert.ok(pts.length > 20, `terrace ${i} laid no plumbing`);
+    for (const [x, y] of pts) {
+      if (Math.abs(y - (groundYAt(i, x) - LAYOUT.soilH)) > 3) continue;  // the stream's own banks, not plumbing
+      assert.ok(x < c.lo || x > c.hi, `terrace ${i}: plumbing at x=${x.toFixed(1)} is in the stream`);
+    }
   }
 });
 
@@ -358,8 +401,9 @@ test('each altitude band is named once, at its lowest shelf, beside the stream',
     const b = altitudeMarkerBox(i);
     assert.ok(b.x + b.w <= layout.tileGeom(i, 0).x + 2, `the ${altitudeOf(i)} marker stands on a tile`);
     assert.ok(b.y + b.h <= groundYAt(i, b.x + b.w / 2), 'the marker is buried');
-    // …and it stands at the shelf's own left end, by the water, not at a fixed x
-    assert.ok(Math.abs(b.x + b.w / 2 - terraceGeom(i).left) < 8, `the ${altitudeOf(i)} marker is not at its shelf's end`);
+    // …at the left edge of the shelf, and never standing in the water
+    assert.ok(b.x >= 0 && b.x <= 6, `the ${altitudeOf(i)} marker is not at the left edge`);
+    assert.ok(b.x + b.w <= streamCrossing(i).lo, `the ${altitudeOf(i)} marker is standing in the stream`);
   }
   assert.equal(ctx.calls.texts.join(''), FARM_ART.bandStarts.map((i) => FARM_ART.bandNames[altitudeOf(i)]).join(''));
 });

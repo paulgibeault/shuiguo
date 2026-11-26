@@ -32,6 +32,7 @@ import {
   farmOf, growthOf, cycleOf, isPerennial, spanOf, isStructure,
 } from './constants.js';
 import { fitOf } from './terrain.js';
+import { tilesBeforeStream } from './farm-layout.js';
 
 const SAVE_VERSION = 2;
 const COLS = TUNING.tilesPerTerrace;
@@ -203,8 +204,14 @@ function spanOfThing(what) {
 }
 
 // Are tiles [col, col+span) all on the terrace and bare (or held by `ignore`)?
-function isClear(terrace, col, span, ignore) {
+// …and, on terrace `ti`, not straddling the stream: the row parts around the
+// water (js/farm-layout.js), and a tree cannot stand with a foot in each bank.
+function isClear(terrace, col, span, ignore, ti) {
   if (!Number.isInteger(col) || col < 0 || col + span > COLS) return false;
+  if (span > 1 && ti != null) {
+    const split = tilesBeforeStream(ti);
+    if (col < split && col + span > split) return false;
+  }
   for (const p of terrace.plots) {
     if (p === ignore) continue;
     if (p.col < col + span && col < p.col + p.span) return false;
@@ -222,7 +229,7 @@ export function anchorFor(farm, ti, col, what, ignore = null) {
   const span = spanOfThing(what);
   if (!terrace || !span) return null;
   for (let start = col; start > col - span; start--) {
-    if (isClear(terrace, start, span, ignore)) return start;
+    if (isClear(terrace, start, span, ignore, ti)) return start;
   }
   return null;
 }
@@ -236,7 +243,7 @@ export function canPlace(farm, ti, col, what) {
   if (!span) return 'no such seed';
   if (!Number.isInteger(col) || col < 0 || col >= COLS) return 'no such tile';
   if (col + span > COLS) return 'not enough room';
-  if (!isClear(terrace, col, span)) return 'not enough room';
+  if (!isClear(terrace, col, span, null, ti)) return 'not enough room';
   return null;
 }
 
@@ -498,13 +505,13 @@ function isEpoch(v) { return typeof v === 'number' && isFinite(v) && v >= 0; }
 // One plot out of a save, or null if we don't believe it. Placement is checked
 // against what has already been restored on the same terrace, so two saved
 // plots claiming the same tile keep the first and lose the second.
-function restorePlot(raw, terrace) {
+function restorePlot(raw, terrace, ti) {
   if (!raw || typeof raw !== 'object') return null;
   const col = raw.col;
   if (!Number.isInteger(col) || col < 0 || col >= COLS) return null;
 
   if (isStructure(raw.kind)) {
-    if (!isClear(terrace, col, 1)) return null;
+    if (!isClear(terrace, col, 1, null, ti)) return null;
     return makeStructurePlot(col, raw.kind);
   }
 
@@ -513,7 +520,7 @@ function restorePlot(raw, terrace) {
   // The kind is the TABLE's, not the save's — a save claiming a watermelon tree
   // is describing a plant that has never existed.
   if (raw.kind !== farmOf(level).kind) return null;
-  if (!isClear(terrace, col, spanOf(level))) return null;
+  if (!isClear(terrace, col, spanOf(level), null, ti)) return null;
 
   const plot = makePlantPlot(col, level, isEpoch(raw.lastEvalMs) ? raw.lastEvalMs : 0);
   plot.mature = raw.mature === true && isPerennial(level);
@@ -557,12 +564,12 @@ export function restore(save) {
   if (save.terraces.length < 1 || save.terraces.length > MAX_TERRACES) return null;
 
   const farm = { terraces: [], irrigation: save.irrigation === true };
-  for (const rawTerrace of save.terraces) {
+  for (const [ti, rawTerrace] of save.terraces.entries()) {
     const terrace = makeTerrace();
     if (rawTerrace && typeof rawTerrace === 'object') {
       terrace.sprinkler = rawTerrace.sprinkler === true;
       for (const raw of Array.isArray(rawTerrace.plots) ? rawTerrace.plots : []) {
-        const plot = restorePlot(raw, terrace);
+        const plot = restorePlot(raw, terrace, ti);
         if (plot) insert(terrace, plot);
       }
     }

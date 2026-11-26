@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   LAYOUT, worldHeight, groundYOf, terraceGeom, tileW, tileGeom, plotGeom, tileAtPoint,
-  forSaleBox, terracePriceBox, maxScroll, scrollToTerrace, streamXAt, streamRightAt, groundYAt,
+  forSaleBox, terracePriceBox, maxScroll, scrollToTerrace, streamXAt, streamRightAt, groundYAt, streamCrossing, tilesBeforeStream,
 } from '../js/farm-layout.js';
 import { WORLD, MAX_TERRACES, TUNING } from '../js/constants.js';
 
@@ -45,15 +45,26 @@ test('tiles fill their shelf in order, without overlapping or spilling off it', 
   }
 });
 
-test('every shelf starts at the stream\'s bank, and no tile is in the water', () => {
+// Terraces run edge to edge; the stream crosses each of them. No tile may
+// stand in the water, and the row parts around it rather than shuffling up.
+test('every shelf runs edge to edge, and its tiles part around the stream', () => {
   for (let ti = 0; ti < MAX_TERRACES; ti++) {
     const t = terraceGeom(ti);
-    const g = groundYOf(ti);
-    for (let y = g - LAYOUT.bandH; y <= g + LAYOUT.wallH; y += 4) {
-      assert.ok(streamRightAt(y) < tileGeom(ti, 0).x, `terrace ${ti + 1}'s first tile is in the stream at y=${y}`);
+    assert.ok(t.left <= 0 && t.right >= LAYOUT.width, `terrace ${ti + 1} does not reach both edges`);
+    const water = streamCrossing(ti);
+    const split = tilesBeforeStream(ti);
+    for (let col = 0; col < LAYOUT.cols; col++) {
+      const g = tileGeom(ti, col);
+      assert.ok(g.x >= 0 && g.x + g.w <= LAYOUT.width, `tile ${ti}:${col} is off the world`);
+      assert.ok(g.x + g.w < water.lo || g.x > water.hi, `tile ${ti}:${col} is in the stream`);
+      assert.equal(g.x + g.w < water.lo, col < split, `tile ${ti}:${col} is on the wrong bank`);
     }
-    assert.ok(t.left > streamXAt(g), `terrace ${ti + 1} starts on the far side of the stream`);
   }
+});
+
+test('the stream wanders: it crosses the shelves in different places', () => {
+  const xs = Array.from({ length: MAX_TERRACES }, (_, i) => streamCrossing(i).x);
+  assert.ok(Math.max(...xs) - Math.min(...xs) > 30, 'the stream runs straight down one column');
 });
 
 // The point of the contour: ten shelves that are not ten copies of one ruled

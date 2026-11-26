@@ -6,7 +6,7 @@
 // under node against a stub.
 //
 // The picture is central Taiwan seen from the road below: stone-walled terraces
-// stacked up a tall slope, a stream stepping down the left-hand side in little
+// stacked up a tall slope, a stream cascading down across them in little
 // falls, the farmhouse and its red-tiled roof at the foot, fog lying where the
 // valley gives way to the hillside and the hillside to the ridge, and three
 // ranges of mountains behind. Light theme is a clear morning; dark is evening,
@@ -26,7 +26,7 @@
 
 import { MAX_TERRACES } from './constants.js';
 import {
-  LAYOUT, worldHeight, groundYOf, groundYAt, terraceGeom, tileGeom,
+  LAYOUT, worldHeight, groundYOf, groundYAt, tileGeom, streamCrossing, tilesBeforeStream,
   streamXAt, streamRightAt, streamCenterAt, streamWAt, forSaleBox, terracePriceBox,
 } from './farm-layout.js';
 import { altitudeOf } from './terrain.js';
@@ -220,12 +220,31 @@ function sample(i, from, to) {
   return pts;
 }
 
+// Where the stream crosses a shelf: the water's banks sampled from just above
+// the shelf's earth down to the foot of its wall, split at the ground line into
+// the channel over the shelf and the fall down the wall face; bank stones
+// either side; and the splash pool at the foot.
+function crossingOf(i, c) {
+  const gy = c.y, top = gy - LAYOUT.soilH - 5, foot = gy + LAYOUT.wallH;
+  const banks = [];
+  for (let y = top; y <= foot + 2.01; y += 2) banks.push({ y, l: streamXAt(y), r: streamRightAt(y) });
+  const at = (y) => banks.reduce((b, p) => (Math.abs(p.y - y) < Math.abs(b.y - y) ? p : b));
+  const lip = at(gy), base = at(foot);
+  const rnd = lcg(3700 + i * 11);
+  const j = () => (rnd() - 0.5) * 2;
+  const rocks = [
+    [lip.l - 3 + j(), gy - 3, 3.6], [lip.r + 3 + j(), gy - 4, 4.2], [lip.r + 7, gy - 1, 2.6],
+    [base.l - 5 + j(), foot + 2, 4.4], [base.r + 5 + j(), foot + 1.5, 4.8], [base.r + 10, foot + 4, 2.8],
+  ];
+  return { gy, top, foot, banks, lip, base, rocks };
+}
+
 const SHELVES = Array.from({ length: MAX_TERRACES }, (_, i) => {
-  const t = terraceGeom(i);
-  const L = t.left;
-  const offEdge = t.right >= W - 1;          // runs off the world: no visible end
-  const R = offEdge ? W + 30 : t.right;
+  // every shelf runs edge to edge — and a little past, into any letterbox
+  const L = SPAN_L, R = SPAN_R;
   const top = sample(i, L, R);
+  const cross = streamCrossing(i);
+  const wet = (x, pad) => x > cross.lo - pad && x < cross.hi + pad;
   const rndB = lcg(1900 + i * 37);
   // the foot of the wall wanders a little: dry stone, not a ruler
   const bottom = top.map((p) => ({ x: p.x, y: p.y + LAYOUT.wallH + (rndB() - 0.5) * 1.6 }));
@@ -257,37 +276,32 @@ const SHELVES = Array.from({ length: MAX_TERRACES }, (_, i) => {
 
   // what an unbought shelf has gone to: tall grass, wildflowers, a bush or two
   const rndO = lcg(4400 + i * 31);
-  const a = L + 4, b = Math.min(R, W) - 6, span = b - a;
+  // — across the whole shelf, but never standing in the water
+  const a = 0, span = W;
   const at = (x, dy) => groundYAt(i, x) - LAYOUT.soilH - dy;
-  const blades = Array.from({ length: 46 }, () => {
+  const blades = Array.from({ length: 52 }, () => {
     const x = a + rndO() * span;
     return { x, y: at(x, 0), h: 8 + rndO() * 16, lean: (rndO() - 0.5) * 9, tall: rndO() < 0.45 };
-  });
-  const flowers = Array.from({ length: 14 }, () => {
+  }).filter((b) => !wet(b.x, 3));
+  const flowers = Array.from({ length: 16 }, () => {
     const x = a + 4 + rndO() * (span - 8);
     return { x, y: at(x, 6 + rndO() * 16), r: 1.3 + rndO() * 1.1, c: Math.floor(rndO() * 3) };
-  });
+  }).filter((f) => !wet(f.x, 4));
   const bushes = Array.from({ length: 2 }, (__, k) => {
-    const x = a + span * (0.18 + k * 0.55 + rndO() * 0.2);
+    const x = cross.hi + 30 + (W - cross.hi - 60) * (0.1 + k * 0.6 + rndO() * 0.2);
     return { x, y: at(x, 0), r: 9 + rndO() * 5 };
   });
 
-  // a few bank stones where the wall butts against the stream
-  const rocks = [[L - 1, yL + 5, 5.5], [L + 2, yL + LAYOUT.wallH - 4, 6.5], [L - 3, yL - 2, 4], [L + 5, yL + 13, 3.6]];
-
-  return { i, L, R, offEdge, top, bottom, yL, yR, stones, lip, blades, flowers, bushes, rocks };
+  return { i, L, R, offEdge: true, top, bottom, yL, yR, stones, lip, blades, flowers, bushes, cross: crossingOf(i, cross) };
 });
 
 // The outline of a shelf body from `up` above its ground line down to its
-// wall's foot, with a rounded end on the right where the shelf runs out into
-// the hillside. One path, used for the mortar, the clip and the tint.
+// wall's foot, edge to edge. One path, used for the mortar, the clip and the
+// tint.
 function shelfBody(ctx, sh, up) {
-  const { top, bottom, R, yR, offEdge } = sh;
+  const { top, bottom } = sh;
   ctx.moveTo(top[0].x, top[0].y - up);
   for (const p of top) ctx.lineTo(p.x, p.y - up);
-  const by = bottom[bottom.length - 1].y;
-  if (offEdge) ctx.lineTo(R, by);
-  else ctx.bezierCurveTo(R + 9, yR - up + 4, R + 7, by - 4, R - 6, by + 0.5);
   for (let k = bottom.length - 1; k >= 0; k--) ctx.lineTo(bottom[k].x, bottom[k].y);
   ctx.closePath();
 }
@@ -376,14 +390,6 @@ const RIPPLES = (() => {
   }
   return out;
 })();
-
-// Where the stream steps down past each wall: level with the wall it runs
-// beside, as wide as the water is there.
-const FALLS = SHELVES.map((sh) => {
-  const y = sh.yL - 2;
-  const l = streamXAt(y + 10), w = streamWAt(y + 10);
-  return { x: l + 2, y, w: w - 4, h: LAYOUT.wallH + 4 };
-});
 
 const STARS = (() => {
   const rnd = lcg(3003);
@@ -729,11 +735,13 @@ function paintFraming(ctx, th, f, i) {
 }
 
 /**
- * The stream down the left of the mountain — the irrigation fantasy made
- * visible long before it is affordable. It steps down the slope in a little
- * fall beside every terrace wall. Under reduced motion the water is simply
- * still (ripples and falls are drawn, nothing slides); with motion a shimmer
- * slides down it and the falls run. `view` (optional, world y) clips the work.
+ * The stream down the mountain — the irrigation fantasy made visible long
+ * before it is affordable. This is the water on the SLOPE, between shelves,
+ * from the spring at the top to the footbridge at the bottom; it is painted
+ * behind the terraces, and each terrace paints its own crossing (channel and
+ * fall) over its wall. Under reduced motion the water is simply still
+ * (ripples are drawn, nothing slides); with motion a shimmer slides down it.
+ * `view` (optional, world y) clips the work.
  */
 export function paintStream(ctx, th, tMs, motion, view) {
   const top = STREAM_TOP;
@@ -822,31 +830,6 @@ export function paintStream(ctx, th, tMs, motion, view) {
   }
   ctx.stroke();
 
-  // a fall where the stream steps down past every terrace wall, foam at its foot
-  const t = motion ? tMs || 0 : 0;
-  const run = (t / 700) % 1;
-  for (const f of FALLS) {
-    if (f.y + f.h + 6 < y0 || f.y > y1) continue;
-    ctx.fillStyle = th.streamLight;
-    ctx.beginPath();
-    roundBox(ctx, f.x, f.y, f.w, f.h, 3);
-    ctx.fill();
-    ctx.strokeStyle = th.foam;
-    ctx.lineWidth = 1.1;
-    ctx.beginPath();
-    for (let k = 0; k < 4; k++) {
-      const sx = f.x + 2.5 + k * (f.w - 5) / 3;
-      const a = f.y + 2 + ((k * 0.37 + run) % 1) * (f.h - 10);
-      ctx.moveTo(sx, a);
-      ctx.lineTo(sx, a + 7);
-    }
-    ctx.stroke();
-    ctx.fillStyle = th.foam;
-    ctx.beginPath();
-    for (let k = 0; k < 4; k++) blob(ctx, f.x + 2 + k * (f.w - 4) / 3, f.y + f.h + 1, 3.6, 2.2);
-    ctx.fill();
-  }
-
   if (!motion) return;
   const u = ((tMs % FARM_ART.shimmerMs) / FARM_ART.shimmerMs);
   ctx.strokeStyle = th.shimmer;
@@ -880,14 +863,19 @@ export function paintStream(ctx, th, tMs, motion, view) {
  * are buying and where it will be. The 出售 sign is painted separately.
  *
  * `opts.sprinkler` lays a pipe with sprinkler heads along the back of the
- * shelf; `opts.irrigated` a little channel of water there.
+ * shelf; `opts.irrigated` a little channel of water there — both along the
+ * row of tiles only, so neither crosses the stream. `opts.tMs`/`opts.motion`
+ * (optional) animate the fall where the stream crosses this shelf.
+ *
+ * Every shelf runs edge to edge, and the stream crosses each one: that
+ * crossing is drawn here, after the wall, so the fall sits on top of it.
  */
 export function paintTerrace(ctx, th, i, owned, opts) {
   const sh = SHELVES[i] || SHELVES[0];
   const { soilH } = LAYOUT;
 
   // the wall: mortar in the shape of the shelf, then stones laid along the
-  // contour inside it — clipped, so the courses end where the wall ends
+  // contour inside it — clipped, so the courses follow the wall's own outline
   ctx.fillStyle = th.mortar;
   ctx.beginPath();
   shelfBody(ctx, sh, 0);
@@ -919,16 +907,15 @@ export function paintTerrace(ctx, th, i, owned, opts) {
   ctx.fill();
   if (!owned) {
     ctx.fillStyle = th.wallUnowned;
-    ctx.fillRect(sh.L - 10, sh.yL - 20, sh.R - sh.L + 30, 80);
+    ctx.fillRect(sh.L, sh.cross.gy - 30, sh.R - sh.L, 80);
   }
   ctx.restore();
 
-  // the shelf: a band of earth (or of rough grass) riding the contour
+  // the shelf: a band of earth (or of rough grass) riding the contour, edge to
+  // edge — the strip on the near side of the stream too, which has no tiles
   ctx.fillStyle = owned ? th.soil : th.overgrown;
   ctx.beginPath();
   alongContour(ctx, sh, -soilH);
-  if (sh.offEdge) ctx.lineTo(sh.R, sh.yR);
-  else ctx.quadraticCurveTo(sh.R + 4, sh.yR - soilH * 0.3, sh.R, sh.yR);
   for (let k = sh.top.length - 1; k >= 0; k--) ctx.lineTo(sh.top[k].x, sh.top[k].y);
   ctx.closePath();
   ctx.fill();
@@ -936,12 +923,12 @@ export function paintTerrace(ctx, th, i, owned, opts) {
     ctx.lineWidth = 2.5;
     ctx.strokeStyle = th.soilDark;              // the back of the shelf, in the bank's shade
     ctx.beginPath();
-    alongContour(ctx, sh, -soilH + 1.25, -Infinity, sh.R - 4);
+    alongContour(ctx, sh, -soilH + 1.25);
     ctx.stroke();
     ctx.lineWidth = 1.2;
     ctx.strokeStyle = th.soilLight;             // …and its front edge in the light
     ctx.beginPath();
-    alongContour(ctx, sh, -1.9, -Infinity, sh.R - 4);
+    alongContour(ctx, sh, -1.9);
     ctx.stroke();
   }
 
@@ -962,25 +949,26 @@ export function paintTerrace(ctx, th, i, owned, opts) {
 
   if (!owned) paintOvergrowth(ctx, th, sh);
 
+  // the plumbing runs along the row of tiles only, so it never crosses the
+  // water: one run per group when the row parts around the stream
+  const runs = owned && opts && (opts.irrigated || opts.sprinkler) ? tileRuns(i) : [];
   if (owned && opts && opts.irrigated) {
     ctx.lineWidth = 3.2;
     ctx.strokeStyle = th.streamDark;
     ctx.beginPath();
-    alongContour(ctx, sh, -soilH + 1.6, -Infinity, sh.R - 5);
+    for (const [a, b] of runs) alongContour(ctx, sh, -soilH + 1.6, a, b);
     ctx.stroke();
     ctx.lineWidth = 1.5;
     ctx.strokeStyle = th.stream;
     ctx.beginPath();
-    alongContour(ctx, sh, -soilH + 1.4, -Infinity, sh.R - 5);
+    for (const [a, b] of runs) alongContour(ctx, sh, -soilH + 1.4, a, b);
     ctx.stroke();
   }
   if (owned && opts && opts.sprinkler) {
-    const end = tileGeom(i, LAYOUT.cols - 1);
-    const pipeEnd = end.x + end.w + 2;
     ctx.lineWidth = 2.6;
     ctx.strokeStyle = th.pipe;
     ctx.beginPath();
-    alongContour(ctx, sh, -soilH - 0.2, -Infinity, pipeEnd);
+    for (const [a, b] of runs) alongContour(ctx, sh, -soilH - 0.2, a, b);
     ctx.stroke();
     ctx.fillStyle = th.pipe;
     ctx.beginPath();
@@ -995,27 +983,8 @@ export function paintTerrace(ctx, th, i, owned, opts) {
     ctx.lineWidth = 0.8;
     ctx.strokeStyle = th.pipeLight;
     ctx.beginPath();
-    alongContour(ctx, sh, -soilH - 0.7, -Infinity, pipeEnd);
+    for (const [a, b] of runs) alongContour(ctx, sh, -soilH - 0.7, a, b);
     ctx.stroke();
-  }
-
-  // the left end butts against the stream's bank stones; the right end, if it
-  // is on screen, is a rounded tump of grass running into the hillside
-  for (const [fill, dy, k] of [[th.rockDark, 0.8, 1], [th.rock, -0.5, 0.78]]) {
-    ctx.fillStyle = fill;
-    ctx.beginPath();
-    for (const [x, y, r] of sh.rocks) blob(ctx, x, y + dy, r * 1.25 * k, r * k);
-    ctx.fill();
-  }
-  if (!sh.offEdge) {
-    for (const [fill, dx, dy, k] of [[th.grassDark, 0, 0, 1], [th.grass, -1.5, -1.5, 0.7]]) {
-      ctx.fillStyle = fill;
-      ctx.beginPath();
-      disc(ctx, sh.R - 1 + dx, sh.yR - 2 + dy, 7 * k);
-      disc(ctx, sh.R + 5 + dx, sh.yR + 5 + dy, 6 * k);
-      disc(ctx, sh.R + 1 + dx, sh.yR + 13 + dy, 5.5 * k);
-      ctx.fill();
-    }
   }
 
   // the altitude band, tinted over the whole shelf: warm valley, cool ridge
@@ -1024,6 +993,98 @@ export function paintTerrace(ctx, th, i, owned, opts) {
     ctx.fillStyle = tint;
     ctx.beginPath();
     shelfBody(ctx, sh, soilH);
+    ctx.fill();
+  }
+
+  paintCrossing(ctx, th, sh.cross, opts);
+}
+
+// The x-ranges the row of tiles covers on terrace i: one per group, either
+// side of the stream.
+function tileRuns(i) {
+  const near = tilesBeforeStream(i);
+  const runs = [];
+  for (const [a, b] of [[0, near], [near, LAYOUT.cols]]) {
+    if (b <= a) continue;
+    const first = tileGeom(i, a), last = tileGeom(i, b - 1);
+    runs.push([first.x - 3, last.x + last.w + 3]);
+  }
+  return runs;
+}
+
+/**
+ * Where the stream crosses a shelf, drawn over it: a channel across the earth,
+ * a fall down the face of the wall with foam at its lip and its foot, a little
+ * splash pool, and stones on both banks. Part of paintTerrace, so each fall
+ * sits on top of its own wall. `opts.tMs` and `opts.motion` (optional) run the
+ * streaks down the fall; without them it is drawn still.
+ */
+function paintCrossing(ctx, th, c, opts) {
+  const { banks, gy, foot, lip, base } = c;
+  const motion = opts && opts.motion;
+  const t = motion ? opts.tMs || 0 : 0;
+
+  // splash pool at the foot, under everything else
+  const pcx = (base.l + base.r) / 2, pw = base.r - base.l;
+  ctx.fillStyle = th.bank;
+  ctx.beginPath();
+  blob(ctx, pcx, foot + 3.5, pw * 0.78, 5.5);
+  ctx.fill();
+  ctx.fillStyle = th.stream;
+  ctx.beginPath();
+  blob(ctx, pcx, foot + 3.5, pw * 0.64, 4);
+  ctx.fill();
+
+  // the channel across the shelf (water) and the fall down the wall (white water)
+  const span = (from, to, pad) => {
+    const seg = banks.filter((p) => p.y >= from - 0.01 && p.y <= to + 0.01);
+    ctx.moveTo(seg[0].l - pad, seg[0].y);
+    for (const p of seg) ctx.lineTo(p.l - pad, p.y);
+    for (let k = seg.length - 1; k >= 0; k--) ctx.lineTo(seg[k].r + pad, seg[k].y);
+    ctx.closePath();
+  };
+  ctx.fillStyle = th.bank;
+  ctx.beginPath();
+  span(c.top, gy, 2.5);
+  ctx.fill();
+  ctx.fillStyle = th.stream;
+  ctx.beginPath();
+  span(c.top, gy, 0);
+  ctx.fill();
+  ctx.fillStyle = th.streamLight;
+  ctx.beginPath();
+  span(gy, foot, 0.5);
+  ctx.fill();
+
+  // streaks running down the fall
+  ctx.strokeStyle = th.foam;
+  ctx.lineWidth = 1.1;
+  ctx.beginPath();
+  const run = (t / 700) % 1;
+  const fh = foot - gy;
+  for (let k = 0; k < 4; k++) {
+    const y = gy + 2 + ((k * 0.37 + run) % 1) * (fh - 9);
+    const p = banks.find((b) => b.y >= y) || base;
+    const sx = p.l + 3 + k * (p.r - p.l - 6) / 3;
+    ctx.moveTo(sx, y);
+    ctx.lineTo(sx, y + 7);
+  }
+  ctx.stroke();
+
+  // foam where the water tips over the lip and where it lands
+  ctx.fillStyle = th.foam;
+  ctx.beginPath();
+  for (let k = 0; k < 4; k++) {
+    blob(ctx, lip.l + 2 + k * (lip.r - lip.l - 4) / 3, gy, 3, 1.6);
+    blob(ctx, base.l + 1 + k * (base.r - base.l - 2) / 3, foot + 1.5, 3.8, 2.2);
+  }
+  ctx.fill();
+
+  // stones on both banks, at the lip and at the foot
+  for (const [fill, dy, k] of [[th.rockDark, 0.8, 1], [th.rock, -0.5, 0.78]]) {
+    ctx.fillStyle = fill;
+    ctx.beginPath();
+    for (const [x, y, r] of c.rocks) blob(ctx, x, y + dy, r * 1.25 * k, r * k);
     ctx.fill();
   }
 }
@@ -1360,13 +1421,14 @@ export function paintTerracePrice(ctx, th, i, price) {
 }
 
 /**
- * A small wooden post at the left end of the lowest terrace of each altitude
- * band, beside the stream, with the band's name lettered down it — 谷地,
+ * A small wooden post at the left edge of the lowest terrace of each altitude
+ * band, standing on the shelf, with the band's name lettered down it — 谷地,
  * 山腰, 高山 — so the player notices that the mountain has climates. Scenery:
  * quiet, small, no hit box.
  */
 export function altitudeMarkerBox(i) {
-  const x = (SHELVES[i] || SHELVES[0]).L - 6;
+  // at the left edge of the shelf, clear of the water if the stream is near
+  const x = Math.max(1, Math.min(4, streamCrossing(i).lo - 17));
   return { x, y: groundYAt(i, x + 5.5) - LAYOUT.soilH - 34, w: 11, h: 26 };
 }
 

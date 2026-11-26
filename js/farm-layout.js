@@ -93,7 +93,7 @@ export function groundYAt(i, x) {
 export function streamCenterAt(y) {
   // a wide, lazy meander out into the slope and back, with a smaller wiggle
   // riding on it — a mountain stream finds its own way down
-  return 36 + Math.sin(y / 170 + 0.4) * 14 + Math.sin(y / 61 + 1.3) * 5;
+  return 44 + Math.sin(y / 170 + 0.4) * 21 + Math.sin(y / 61 + 1.3) * 6;
 }
 export function streamWAt(y) {
   return LAYOUT.streamW - 3 + Math.sin(y / 90 + 2) * 4;
@@ -107,36 +107,62 @@ export function streamRightAt(y) {
 }
 
 // ── the shelves ────────────────────────────────────────────────────────────
+//
+// Every terrace runs the full width of the hill, edge to edge, and the stream
+// crosses each one on its way down — over the shelf and down the face of its
+// wall in a little fall. The row of tiles parts around the water: some tiles
+// on the near bank, the rest on the far one, never one in the stream.
 
-const ROW_W = LAYOUT.cols * LAYOUT.tileW + (LAYOUT.cols - 1) * LAYOUT.tileGap;
-
-// Where terrace i's row of tiles begins: past the stream bank and the shelf's
-// own earth, then nudged along by the shelf's personality — but never so far
-// that the last tile leaves the world.
-function rowLeftOf(i) {
-  // the widest the stream reaches anywhere in this shelf's band — a tree's
-  // crown stands well above its tile, and none of it should be in the water
-  let bank = 0;
-  const g = groundYOf(i);
-  for (let y = g - LAYOUT.bandH; y <= g + LAYOUT.wallH; y += 4) bank = Math.max(bank, streamRightAt(y));
-  const min = bank + 3 + LAYOUT.shelfPad;
-  const max = LAYOUT.right - LAYOUT.shelfPad - ROW_W;
-  return Math.min(max, min + jitter(i, 4) * Math.max(0, max - min));
+// Where the stream crosses terrace i: the extent of the water, [lo, hi], over
+// the strip a tile and its soil actually occupy (just above the ground line
+// down to the foot of the wall).
+export function streamCrossing(i) {
+  const cx = streamCenterAt(groundYOf(i));
+  const gy = groundYAt(i, cx);
+  let lo = Infinity, hi = -Infinity;
+  for (let y = gy - 30; y <= gy + LAYOUT.wallH; y += 2) {
+    lo = Math.min(lo, streamXAt(y));
+    hi = Math.max(hi, streamRightAt(y));
+  }
+  return { lo, hi, x: (lo + hi) / 2, y: gy };
 }
 
-// One terrace's extent: it starts at the stream's bank and runs a little way
-// past its last tile, a different distance on every shelf. `groundY` is the
-// ground line at the shelf's middle; use groundYAt for anywhere else.
+const BANK = 5;   // dry bank between the water and the nearest tile
+
+// How terrace i's row parts around the stream: how many tiles stand on the
+// near (left) bank, and where each group starts. The near group hugs the
+// water when it is there at all; the far group drifts by the shelf's own
+// personality within whatever room is left.
+function rowOf(i) {
+  const { tileW: w, tileGap: gap, cols, shelfPad, width } = LAYOUT;
+  const { lo, hi } = streamCrossing(i);
+  const span = (n) => (n > 0 ? n * w + (n - 1) * gap : 0);
+  // All on the far bank if they fit there; otherwise the fewest on the near
+  // bank that leaves room for the rest; and if neither bank will quite do, the
+  // far group squeezes up to the water and the world's edge.
+  const fitsNear = (n) => n === 0 || shelfPad + span(n) <= lo - BANK;
+  const fitsFar = (n) => hi + BANK + span(cols - n) <= width - 2;
+  let near = 0;
+  while (near < cols && !(fitsNear(near) && fitsFar(near))) near++;
+  if (near === cols) near = 0;
+  const nearX = lo - BANK - span(near);
+  const farMin = hi + BANK;
+  const farMax = width - 2 - span(cols - near);
+  const farX = Math.min(farMax, farMin + jitter(i, 4) * Math.max(0, Math.min(18, farMax - farMin)));
+  return { near, nearX, farX };
+}
+
+// How many of terrace i's tiles stand on the near side of the stream. A thing
+// two tiles wide cannot straddle the water (js/farm.js asks this).
+export function tilesBeforeStream(i) { return rowOf(i).near; }
+
+// One terrace's extent: edge to edge, a little past each side so no wall ends
+// in view. `groundY` is the ground line at the middle; use groundYAt for
+// anywhere else.
 export function terraceGeom(i) {
-  const left = streamRightAt(groundYOf(i)) + 3;
-  const rowRight = rowLeftOf(i) + ROW_W;
-  const right = Math.min(LAYOUT.width + 2, rowRight + LAYOUT.shelfPad + 4 + jitter(i, 5) * 14);
-  return {
-    groundY: groundYAt(i, (left + right) / 2),
-    left,
-    right,
-    width: right - left,
-  };
+  const left = -6;
+  const right = LAYOUT.width + 6;
+  return { groundY: groundYAt(i, LAYOUT.width / 2), left, right, width: right - left };
 }
 
 export function tileW() { return LAYOUT.tileW; }
@@ -145,7 +171,10 @@ export function tileW() { return LAYOUT.tileW; }
 // is where the shelf's real ground line passes under its middle.
 export function tileGeom(ti, col) {
   const w = LAYOUT.tileW;
-  const x = rowLeftOf(ti) + col * (w + LAYOUT.tileGap);
+  const row = rowOf(ti);
+  const x = col < row.near
+    ? row.nearX + col * (w + LAYOUT.tileGap)
+    : row.farX + (col - row.near) * (w + LAYOUT.tileGap);
   return { x, cx: x + w / 2, w, groundY: groundYAt(ti, x + w / 2) };
 }
 

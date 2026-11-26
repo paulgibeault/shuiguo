@@ -213,6 +213,7 @@ export function makeFarmHost({ canvas, save, getSettings, wallNow, loop, rng, on
       paintTerrace(ctx, th, i, i < owned, {
         sprinkler: !!(terrace && terrace.sprinkler),
         irrigated: !!(c.farm && c.farm.irrigation),
+        tMs, motion,
       });
       if (terrace) drawShelf(c, i, terrace, plots, tMs, motion, anyRipe, canSowAny, now);
     }
@@ -272,7 +273,7 @@ export function makeFarmHost({ canvas, save, getSettings, wallNow, loop, rng, on
       ctx.save();
       ctx.rotate(Math.atan2(groundYAt(ti, cx + w / 2) - groundYAt(ti, cx - w / 2), w));
       paintSoil(ctx, w, LAYOUT.soilH + 2, {
-        wet, bare: !p, moisture: p ? moistureFor(terrace, p.col, p.span) : moistureAt(terrace, col),
+        wet, bare: !p, moisture: p ? moistureFor(terrace, ti, p.col, p.span) : moistureAt(terrace, ti, col),
       });
       ctx.restore();
       if (!p && canSowAny && !moving) paintPlantHint(ctx, LAYOUT.plantH, tMs, motion);
@@ -593,7 +594,7 @@ export function makeFarmHost({ canvas, save, getSettings, wallNow, loop, rng, on
 
   function spotLine(terrace, ti, col, span) {
     const alt = ALTITUDE_NAMES[altitudeOf(ti)];
-    const wet = MOISTURE_NAMES[moistureFor(terrace, col, span)];
+    const wet = MOISTURE_NAMES[moistureFor(terrace, ti, col, span)];
     return `${alt} · ${wet} soil`;
   }
 
