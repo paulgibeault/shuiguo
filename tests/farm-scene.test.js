@@ -256,19 +256,53 @@ test('every terrace carries the stream across it, over its wall', () => {
   assert.deepEqual(a.calls, b.calls, 'the fall ran under reduced motion');
 });
 
-// Lake → run → pool → drop. The pool sits on the shelf at the lip of the fall,
-// wider than the stream that feeds it, and never reaches under a tile.
-test('the stream pools on every shelf before it drops, clear of the tiles', () => {
+// Lake → run → drop → pool → run. Each fall lands in a plunge pool on the
+// slope below its wall: the stream spread out and deepened, wider than it is
+// long, clear of the lower shelf's tiles — and with nothing drawn round it
+// that could read as a dam.
+test('every fall lands in a plunge pool at its foot, clear of the tiles and with no rim', () => {
+  const th = FARM_THEMES.light;
   for (let i = 0; i < MAX_TERRACES; i++) {
     const c = streamCrossing(i);
+    const foot = c.y + LAYOUT.wallH;
     const p = streamPool(i);
-    assert.ok(p.x >= c.lo - 3 - 0.01 && p.x + p.w <= c.hi + 3 + 0.01, `terrace ${i}'s pool spills past its crossing`);
-    assert.ok(p.bottom <= c.y + 1 && p.bottom >= c.y - 2, `terrace ${i}'s pool is not on the lip`);
-    assert.ok(p.top < c.y - LAYOUT.soilH, `terrace ${i}'s pool does not reach up the slope`);
-    for (let col = 0; col < LAYOUT.cols; col++) {
-      const t = layout.tileGeom(i, col);
-      assert.ok(t.x + t.w <= p.x + 1.5 || t.x >= p.x + p.w - 1.5, `terrace ${i} tile ${col} stands in the pool`);
+    assert.ok(p.top <= foot + 1 && p.top >= foot - 8, `terrace ${i}'s pool is not at the foot of its fall`);
+    assert.ok(p.bottom > foot + 8, `terrace ${i}'s pool is not on the slope below`);
+    const w = layout.streamWAt(p.cy);
+    assert.ok(p.w / 1.1 >= 1.45 * w && p.w / 1.1 <= 1.85 * w, `terrace ${i}'s pool is ${(p.w / 1.1 / w).toFixed(2)}× the stream`);
+    assert.ok(p.w > p.bottom - p.top, `terrace ${i}'s pool is longer than it is wide`);
+    assert.ok(Math.abs(p.cx - layout.streamCenterAt(p.cy)) < 0.01, `terrace ${i}'s pool is off the stream`);
+    if (i > 0) {
+      for (let col = 0; col < LAYOUT.cols; col++) {
+        const t = layout.tileGeom(i - 1, col);
+        const overlapX = t.x < p.x + p.w && p.x < t.x + t.w;
+        assert.ok(!overlapX || p.bottom < t.groundY - LAYOUT.plantH, `terrace ${i}'s pool reaches tile ${col} below`);
+      }
     }
+    // record what each fill on the terrace covers, and check nothing but water
+    // is painted over the pool itself
+    const ctx = stubCtx();
+    let style = '', pts = [];
+    Object.defineProperty(ctx, 'fillStyle', { get: () => style, set: (v) => { style = v; } });
+    ctx.beginPath = () => { pts = []; };
+    // outlines by their vertices, round things by their centres
+    ctx.moveTo = () => {};
+    ctx.lineTo = (x, y) => pts.push([x, y]);
+    ctx.ellipse = (x, y) => pts.push([x, y]);
+    ctx.arc = (x, y) => pts.push([x, y]);
+    const border = new Set([th.bank, th.rock, th.rockDark, th.streamLight]);
+    let poolDrawn = false;
+    ctx.fill = () => {
+      // the pool is the one gradient fill; only what is drawn on top of it counts
+      if (typeof style !== 'string' && pts.length > 10) { poolDrawn = true; return; }
+      if (!poolDrawn || !border.has(style)) return;
+      for (const [x, y] of pts) {
+        const inside = ((x - p.cx) / (p.w / 2.2)) ** 2 + ((y - p.cy) / ((p.bottom - p.top) / 2.2)) ** 2 < 0.9 && y > foot + 1;
+        assert.ok(!inside, `terrace ${i}: a ${style} shape is drawn on its plunge pool at (${x.toFixed(1)}, ${y.toFixed(1)})`);
+      }
+    };
+    paintTerrace(ctx, th, i, true, {});
+    assert.ok(poolDrawn, `terrace ${i} drew no plunge pool`);
   }
 });
 
@@ -292,7 +326,10 @@ test('the plumbing runs along the tiles and never across the water', () => {
     const ctx = stubCtx();
     let stroke = '';
     Object.defineProperty(ctx, 'strokeStyle', { get: () => stroke, set: (v) => { stroke = v; } });
-    const lineTo = (x, y) => { if (stroke === FARM_THEMES.light.pipe || stroke === FARM_THEMES.light.streamDark) pts.push([x, y]); };
+    // the pipe, and the irrigation channel (the only 3.2-wide streamDark line)
+    const lineTo = (x, y) => {
+      if (stroke === FARM_THEMES.light.pipe || (stroke === FARM_THEMES.light.streamDark && ctx.lineWidth === 3.2)) pts.push([x, y]);
+    };
     ctx.lineTo = lineTo; ctx.moveTo = lineTo;
     paintTerrace(ctx, FARM_THEMES.light, i, true, { sprinkler: true, irrigated: true });
     assert.ok(pts.length > 20, `terrace ${i} laid no plumbing`);

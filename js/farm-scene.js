@@ -249,51 +249,47 @@ function sample(i, from, to) {
 
 // Where the stream crosses a shelf: the water's banks sampled from just above
 // the shelf's earth down to the foot of its wall, split at the ground line into
-// the channel over the shelf and the fall down the wall face; bank stones
-// either side; and the splash pool at the foot.
+// the run over the shelf and the fall down the wall face; and the plunge pool
+// the fall lands in, on the slope below.
 function crossingOf(i, c) {
-  const gy = c.y, top = gy - LAYOUT.soilH - 5, foot = gy + LAYOUT.wallH;
+  const gy = c.y, top = gy - LAYOUT.soilH - 6, foot = gy + LAYOUT.wallH;   // even steps from top land on gy
   const banks = [];
   for (let y = top; y <= foot + 2.01; y += 2) banks.push({ y, l: streamXAt(y), r: streamRightAt(y) });
   const at = (y) => banks.reduce((b, p) => (Math.abs(p.y - y) < Math.abs(b.y - y) ? p : b));
   const lip = at(gy), base = at(foot);
   const rnd = lcg(3700 + i * 11);
-  const j = () => (rnd() - 0.5) * 2;
 
-  // The pool the stream collects in before it drops: on the shelf, its near
-  // edge on the wall's lip, rounder and wider than the run that feeds it, and
-  // reaching back up the slope behind. Near the ground line it stays inside
-  // the crossing's own x-range, so it never reaches under a tile.
-  const cx = (lip.l + lip.r) / 2;
-  const w = streamWAt(gy);
-  const halfW = Math.min(0.8 * w, (cx - (c.lo - 3)) / 1.12, (c.hi + 3 - cx) / 1.12);   // 1.12: the bank around it
-  const hh = 9 + w * 0.22;
+  // The plunge pool where the fall lands: on the slope below the wall, the
+  // stream simply spreading out and deepening — wider than it is long, its
+  // top tucked under the foot of the fall, the run carrying on out of its
+  // downhill side. No rim: its edge is the stream's own colour.
+  const w = streamWAt(foot + 8);
+  const halfW = 0.82 * w;
+  const halfH = halfW * 0.62;
+  const cy = foot + halfH * 0.85;
+  const cx = streamCenterAt(cy);
   const phase = rnd() * 6.28;
-  const pool = [];
-  for (let k = 0; k < 18; k++) {
-    const a = (k / 18) * Math.PI * 2;
-    const wob = 1 + 0.07 * Math.sin(3 * a + phase) + 0.04 * Math.sin(5 * a - phase);
-    const px = cx + Math.cos(a) * halfW * wob;
-    // flattened along the lip below, drawn out up the slope above
-    const py = gy - hh + 1.2 + Math.sin(a) * hh * (Math.sin(a) < 0 ? 1.15 : 1) * wob;
-    pool.push({ x: px, y: Math.min(py, gy + 0.8) });
+  const unit = [];
+  for (let k = 0; k < 22; k++) {
+    const a = (k / 22) * Math.PI * 2;
+    const wob = 1 + 0.06 * Math.sin(3 * a + phase) + 0.035 * Math.sin(5 * a - phase * 1.7);
+    unit.push({ x: Math.cos(a) * wob, y: Math.sin(a) * wob });
   }
-  const rocks = [
-    // rim stones up-slope, behind the row of tiles, and two small ones at the lip
-    [cx - halfW * 0.9 + j(), gy - hh * 1.5, 3.4], [cx + halfW * 0.75 + j(), gy - hh * 1.75, 3.8],
-    [cx - halfW * 0.82, gy - 1.2, 2], [cx + halfW * 0.82, gy - 1.6, 2.2],
-    // and at the foot of the fall, on the slope below
-    [base.l - 5 + j(), foot + 2, 4.4], [base.r + 5 + j(), foot + 1.5, 4.8], [base.r + 10, foot + 4, 2.8],
-  ];
-  return { gy, top, foot, banks, lip, base, rocks, pool: { cx, halfW, hh, pts: pool } };
+  // a loose pebble on each outer flank — never across the way in or out
+  const flank = [[cx - halfW * 1.1, cy + (rnd() - 0.3) * halfH * 0.5, 2.2 + rnd()], [cx + halfW * 1.1, cy + (rnd() - 0.3) * halfH * 0.5, 2.4 + rnd()]];
+  // white water where the fall lands, scattered rather than in a line
+  const splash = Array.from({ length: 6 }, () => ({
+    x: base.l + 2 + rnd() * (base.r - base.l - 4), y: foot + 0.5 + rnd() * halfH * 0.55, r: 1.4 + rnd() * 1.8,
+  }));
+  return { gy, top, foot, banks, lip, base, pool: { cx, cy, halfW, halfH, unit, flank, splash } };
 }
 
-// Where the stream pools on terrace i, for anything that must keep out of it:
-// its x-extent and its top and bottom in world y.
+// The plunge pool at the foot of terrace i's fall, for anything that must keep
+// out of it: its box in world units.
 export function streamPool(i) {
   const p = (SHELVES[i] || SHELVES[0]).cross.pool;
-  const ys = p.pts.map((q) => q.y);
-  return { x: p.cx - p.halfW * 1.12, w: p.halfW * 2.24, top: Math.min(...ys), bottom: Math.max(...ys) };
+  const wob = 1.1;
+  return { x: p.cx - p.halfW * wob, w: p.halfW * 2 * wob, top: p.cy - p.halfH * wob, bottom: p.cy + p.halfH * wob, cx: p.cx, cy: p.cy };
 }
 
 const SHELVES = Array.from({ length: MAX_TERRACES }, (_, i) => {
@@ -422,7 +418,7 @@ const CREST_TREES = (() => {
 // The stream, sampled once: both banks every few units from the spring to the
 // bottom of the world, so a frame walks an array rather than the meander.
 const STREAM_TOP = crestY(LAKE.x) - 1;          // it leaves the lake at the saddle
-const BANK_STEP = 8;
+const BANK_STEP = 3;          // dense enough that the banks follow every swell
 const BANKS = (() => {
   const out = [];
   for (let y = STREAM_TOP; y < H + 10 + BANK_STEP; y += BANK_STEP) out.push({ y, l: streamXAt(y), r: streamRightAt(y) });
@@ -433,9 +429,14 @@ const BANKS = (() => {
 const PEBBLES = (() => {
   const rnd = lcg(8800);
   const out = [];
+  const pools = SHELVES.map((sh) => sh.cross.pool);
+  // never in a plunge pool, nor in the run just below one
+  const inPool = (x, y) => pools.some((p) => ((x - p.cx) / (p.halfW + 4)) ** 2 + ((y - p.cy) / (p.halfH + 10)) ** 2 < 1);
   for (let y = STREAM_TOP + 20; y < H; y += 12 + rnd() * 18) {
     const side = rnd() < 0.5;
-    out.push({ y, x: side ? streamRightAt(y) + 1.5 : streamXAt(y) - 1.5, r: 1.8 + rnd() * 2.2 });
+    const x = side ? streamRightAt(y) + 1.5 : streamXAt(y) - 1.5;
+    const r = 1.8 + rnd() * 2.2;
+    if (!inPool(x, y)) out.push({ y, x, r });
   }
   return out;
 })();
@@ -755,6 +756,8 @@ export function paintHillside(ctx, th, view) {
     // the wall above throws its shade down the bank (not on the top shelf,
     // which has no wall above it), following that wall's wandering foot
     if (i < MAX_TERRACES - 1) paintWallShadow(ctx, shade, SHELVES[i + 1]);
+    // …and the bottom wall's on the verge above the road, also behind the water
+    if (i === 0) paintWallShadow(ctx, shade, SHELVES[0]);
 
     for (const light of [true, false]) {
       ctx.fillStyle = light ? th.patchLight : th.patchDark;
@@ -866,10 +869,12 @@ export function paintStream(ctx, th, tMs, motion, view) {
   if (k1 <= k0) return;
 
   // left bank down, right bank up, `pad` outside the water
+  // the banks taper in from nothing at the lake's mouth
+  const padAt = (k, pad) => pad * Math.min(1, (BANKS[k].y - top) / 14);
   const band = (pad) => {
-    ctx.moveTo(BANKS[k0].l - pad, BANKS[k0].y);
-    for (let k = k0; k <= k1; k++) ctx.lineTo(BANKS[k].l - pad, BANKS[k].y);
-    for (let k = k1; k >= k0; k--) ctx.lineTo(BANKS[k].r + pad, BANKS[k].y);
+    ctx.moveTo(BANKS[k0].l - padAt(k0, pad), BANKS[k0].y);
+    for (let k = k0; k <= k1; k++) ctx.lineTo(BANKS[k].l - padAt(k, pad), BANKS[k].y);
+    for (let k = k1; k >= k0; k--) ctx.lineTo(BANKS[k].r + padAt(k, pad), BANKS[k].y);
     ctx.closePath();
   };
 
@@ -892,17 +897,14 @@ export function paintStream(ctx, th, tMs, motion, view) {
   for (let k = k0; k <= k1; k++) ctx.lineTo(BANKS[k].r - 1.5, BANKS[k].y);
   ctx.stroke();
 
-  // where it leaves the lake: the water spills over the saddle's lip, widening
-  // a touch, so the stream starts from the lake rather than from a cut edge
+  // where it leaves the lake: the mouth is the lake's own water widening
+  // into the stream — no lip, no foam, nothing across it that could read as
+  // a dam, and the banks only begin a little way down
   if (y0 === top) {
     const px = streamCenterAt(top), w = streamWAt(top);
-    ctx.fillStyle = th.stream;
+    ctx.fillStyle = th.lake;
     ctx.beginPath();
-    blob(ctx, px, top + 1, w * 0.75, 2.6);
-    ctx.fill();
-    ctx.fillStyle = th.foam;
-    ctx.beginPath();
-    blob(ctx, px, top + 1.6, w * 0.4, 1);
+    blob(ctx, px, top, w * 0.95, 2.4);
     ctx.fill();
   }
   if (motion && LAKE.y - LAKE.ry < y1 && LAKE.y > y0) {
@@ -1125,30 +1127,19 @@ function tileRuns(i) {
 }
 
 /**
- * Where the stream crosses a shelf, drawn over it: it pools on the shelf just
- * above the lip, then drops down the face of the wall, with foam at the lip
- * and the foot and a little splash pool that the next run flows out of; stones
- * round the pool's rim and at the foot. Part of paintTerrace, so each fall
- * sits on top of its own wall. `opts.tMs` and `opts.motion` (optional) run the
- * streaks and the pool's glint; without them it is drawn still.
+ * Where the stream crosses a shelf, drawn over it: it runs across the shelf at
+ * its own width, tips over the lip and drops down the face of the wall into a
+ * plunge pool on the slope below — white water where it lands, a deep middle,
+ * no rim — and the next run carries on out of the pool's downhill side.
+ * Part of paintTerrace, so each fall sits on top of its own wall. `opts.tMs`
+ * and `opts.motion` (optional) run the streaks and the pool's glint; without
+ * them it is drawn still.
  */
 function paintCrossing(ctx, th, c, opts) {
-  const { banks, gy, foot, lip, base } = c;
+  const { banks, gy, foot, base, pool } = c;
   const motion = opts && opts.motion;
   const t = motion ? opts.tMs || 0 : 0;
 
-  // splash pool at the foot, under everything else
-  const pcx = (base.l + base.r) / 2, pw = base.r - base.l;
-  ctx.fillStyle = th.bank;
-  ctx.beginPath();
-  blob(ctx, pcx, foot + 3.5, pw * 0.78, 5.5);
-  ctx.fill();
-  ctx.fillStyle = th.stream;
-  ctx.beginPath();
-  blob(ctx, pcx, foot + 3.5, pw * 0.64, 4);
-  ctx.fill();
-
-  // the channel across the shelf (water) and the fall down the wall (white water)
   const span = (from, to, pad) => {
     const seg = banks.filter((p) => p.y >= from - 0.01 && p.y <= to + 0.01);
     ctx.moveTo(seg[0].l - pad, seg[0].y);
@@ -1156,38 +1147,51 @@ function paintCrossing(ctx, th, c, opts) {
     for (let k = seg.length - 1; k >= 0; k--) ctx.lineTo(seg[k].r + pad, seg[k].y);
     ctx.closePath();
   };
-  // the fall down the wall face
+
+  // the plunge pool: the stream spread out and deepened where the fall lands —
+  // dark in the middle, the stream's own colour at the edge, and no rim at all,
+  // so it runs into and out of the stream without a seam
+  ctx.save();
+  ctx.translate(pool.cx, pool.cy);
+  ctx.scale(pool.halfW, pool.halfH);
+  ctx.fillStyle = cached(ctx, `farm-plunge:${th.id}`, () => {
+    const g = ctx.createRadialGradient(0, -0.3, 0, 0, 0, 1);
+    g.addColorStop(0, th.poolDeep);
+    g.addColorStop(0.5, th.streamDark);
+    g.addColorStop(1, th.stream);
+    return g;
+  });
+  ctx.beginPath();
+  ctx.moveTo(pool.unit[0].x, pool.unit[0].y);
+  for (const p of pool.unit) ctx.lineTo(p.x, p.y);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+
+  // the run across the shelf to the lip, at the stream's own width, and the
+  // fall down the wall face into the pool
+  ctx.fillStyle = th.bank;
+  ctx.beginPath();
+  span(c.top, gy - 1, 2);
+  ctx.fill();
+  ctx.fillStyle = th.stream;
+  ctx.beginPath();
+  span(c.top, gy, 0);
+  ctx.fill();
+  // the same deeper water along the banks as the run above, so it is one stream
+  ctx.strokeStyle = th.streamDark;
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  const run0 = banks.filter((p) => p.y <= gy);
+  ctx.moveTo(run0[0].l + 1.5, run0[0].y);
+  for (const p of run0) ctx.lineTo(p.l + 1.5, p.y);
+  ctx.moveTo(run0[0].r - 1.5, run0[0].y);
+  for (const p of run0) ctx.lineTo(p.r - 1.5, p.y);
+  ctx.stroke();
   ctx.fillStyle = th.streamLight;
   ctx.beginPath();
-  span(gy, foot, 0.5);
+  span(gy, foot, 0.4);
   ctx.fill();
-
-  // the pool on the shelf: a bank, a pale rim of shallows, the water, and a
-  // dark middle where it is deep — each the same shape, shrunk toward the lip
-  const pool = c.pool;
-  const shape = (k, lift) => {
-    const p0 = pool.pts[0];
-    ctx.moveTo(pool.cx + (p0.x - pool.cx) * k, gy + (p0.y - gy) * k - lift);
-    for (const p of pool.pts) ctx.lineTo(pool.cx + (p.x - pool.cx) * k, gy + (p.y - gy) * k - lift);
-    ctx.closePath();
-  };
-  for (const [fill, k, lift] of [[th.bank, 1.12, 0], [th.streamLight, 1, 0], [th.stream, 0.8, 0.8], [th.poolDeep, 0.42, pool.hh * 0.7]]) {
-    ctx.fillStyle = fill;
-    ctx.beginPath();
-    shape(k, lift);
-    ctx.fill();
-  }
-  if (motion) {
-    // a glint sliding slowly across the still water
-    const u = (t % 5200) / 5200;
-    const gx = pool.cx - pool.halfW * 0.5 + u * pool.halfW;
-    ctx.strokeStyle = th.shimmer;
-    ctx.lineWidth = 1.2;
-    ctx.beginPath();
-    ctx.moveTo(gx, gy - pool.hh * 0.9);
-    ctx.lineTo(gx + 5, gy - pool.hh * 0.9);
-    ctx.stroke();
-  }
 
   // streaks running down the fall
   ctx.strokeStyle = th.foam;
@@ -1204,21 +1208,30 @@ function paintCrossing(ctx, th, c, opts) {
   }
   ctx.stroke();
 
-  // foam where the water tips over the lip and where it lands
+  // white water where it lands (none strung along the lip: that reads as a weir)
   ctx.fillStyle = th.foam;
   ctx.beginPath();
-  for (let k = 0; k < 4; k++) {
-    blob(ctx, lip.l + 2 + k * (lip.r - lip.l - 4) / 3, gy, 3, 1.6);
-    blob(ctx, base.l + 1 + k * (base.r - base.l - 2) / 3, foot + 1.5, 3.8, 2.2);
-  }
+  for (const s of pool.splash) blob(ctx, s.x, s.y, s.r * 1.4, s.r);
   ctx.fill();
 
-  // stones on both banks, at the lip and at the foot
-  for (const [fill, dy, k] of [[th.rockDark, 0.8, 1], [th.rock, -0.5, 0.78]]) {
+  // a loose pebble on each outer flank
+  for (const [fill, dy, k] of [[th.rockDark, 0.6, 1], [th.rock, -0.4, 0.75]]) {
     ctx.fillStyle = fill;
     ctx.beginPath();
-    for (const [x, y, r] of c.rocks) blob(ctx, x, y + dy, r * 1.25 * k, r * k);
+    for (const [x, y, r] of pool.flank) blob(ctx, x, y + dy, r * 1.3 * k, r * k);
     ctx.fill();
+  }
+
+  if (motion) {
+    // a glint drifting slowly across the still water below the splash
+    const u = (t % 5200) / 5200;
+    const gx = pool.cx - pool.halfW * 0.55 + u * pool.halfW * 0.9;
+    ctx.strokeStyle = th.shimmer;
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.moveTo(gx, pool.cy + pool.halfH * 0.45);
+    ctx.lineTo(gx + 5, pool.cy + pool.halfH * 0.45);
+    ctx.stroke();
   }
 }
 
@@ -1264,8 +1277,6 @@ function paintOvergrowth(ctx, th, sh) {
 export function paintFoot(ctx, th, tMs, motion) {
   const t = motion ? tMs || 0 : 0;
 
-  // the verge under the bottom wall: its shade, following its foot
-  paintWallShadow(ctx, wallShade(ctx, th), SHELVES[0]);
 
   // the road, gently curved, two-tone with wheel ruts
   const ry = ROAD_Y;

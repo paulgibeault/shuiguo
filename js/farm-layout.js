@@ -138,7 +138,12 @@ export function groundYAt(i, x) {
 // down: narrow at the top, widest at the foot.
 
 export function streamWAt(y) {
-  return 12 + 15 * downhill(y);
+  // the trend: a trickle at the top, widest at the foot …
+  const base = 12 + 15 * downhill(y);
+  // … and the water's own unevenness riding on it — narrows and swells of a
+  // few units, on two unrelated rhythms so the pattern never visibly repeats
+  const swell = 1 + Math.sin(y / 41 + 0.7) * 0.11 + Math.sin(y / 17 + 2.3) * 0.06;
+  return base * swell;
 }
 // The stream's left bank at world height y.
 export function streamXAt(y) {

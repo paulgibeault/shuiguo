@@ -100,10 +100,16 @@ test('the stream follows its valley smoothly, and grows on the way down', () => 
   // …and it does wander: not one column from the spring to the foot
   const xs = Array.from({ length: MAX_TERRACES }, (_, i) => streamCrossing(i).x);
   assert.ok(Math.max(...xs) - Math.min(...xs) > 40, 'the stream falls straight down the hill');
+  // and it is not a ruled ribbon: its width varies along any one stretch
+  const ws = [];
+  for (let y = groundYOf(4); y < groundYOf(3); y += 3) ws.push(streamWAt(y));
+  assert.ok(Math.max(...ws) - Math.min(...ws) > 2, 'the stream is the same width all along a stretch');
+  assert.equal(streamWAt(groundYOf(0)) > streamWAt(groundYOf(MAX_TERRACES - 1)), true, 'the stream is not widest at the foot');
   for (let ti = 0; ti + 1 < MAX_TERRACES; ti++) {
     const a = streamCrossing(ti), b = streamCrossing(ti + 1);
     assert.ok(Math.abs(a.x - b.x) < 30, `the stream jumps ${Math.abs(a.x - b.x).toFixed(1)} between terraces ${ti + 1} and ${ti + 2}`);
-    assert.ok(streamWAt(groundYOf(ti)) >= streamWAt(groundYOf(ti + 1)), `the stream is narrower below terrace ${ti + 2} than above it`);
+    // it grows on the way down, give or take the swells and narrows of its own
+    assert.ok(streamWAt(groundYOf(ti)) >= streamWAt(groundYOf(ti + 1)) * 0.75, `the stream shrinks below terrace ${ti + 2}`);
   }
 });
 
