@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   LAYOUT, worldHeight, groundYOf, terraceGeom, tileW, tileGeom, plotGeom, tileAtPoint,
-  forSaleBox, terracePriceBox, maxScroll, scrollToTerrace, streamXAt,
+  forSaleBox, terracePriceBox, maxScroll, scrollToTerrace, streamXAt, streamRightAt, groundYAt,
 } from '../js/farm-layout.js';
 import { WORLD, MAX_TERRACES, TUNING } from '../js/constants.js';
 
@@ -40,15 +40,44 @@ test('tiles fill their shelf in order, without overlapping or spilling off it', 
       assert.ok(g.x >= t.left && g.x + g.w <= t.right, `tile ${ti}:${col} spills off its shelf`);
       assert.ok(g.x >= lastRight, `tile ${ti}:${col} overlaps the one before`);
       lastRight = g.x + g.w;
-      assert.equal(g.groundY, t.groundY);
+      assert.equal(g.groundY, groundYAt(ti, g.cx), `tile ${ti}:${col} floats off its own ground line`);
     }
   }
 });
 
-test('the stream has the strip left of every shelf to itself', () => {
-  for (let y = 0; y < worldHeight(); y += 50) {
-    assert.ok(streamXAt(y) + LAYOUT.streamW < LAYOUT.left, `the stream runs onto the shelves at y=${y}`);
+test('every shelf starts at the stream\'s bank, and no tile is in the water', () => {
+  for (let ti = 0; ti < MAX_TERRACES; ti++) {
+    const t = terraceGeom(ti);
+    const g = groundYOf(ti);
+    for (let y = g - LAYOUT.bandH; y <= g + LAYOUT.wallH; y += 4) {
+      assert.ok(streamRightAt(y) < tileGeom(ti, 0).x, `terrace ${ti + 1}'s first tile is in the stream at y=${y}`);
+    }
+    assert.ok(t.left > streamXAt(g), `terrace ${ti + 1} starts on the far side of the stream`);
   }
+});
+
+// The point of the contour: ten shelves that are not ten copies of one ruled
+// line. Each bows and tilts its own way, and the rows of tiles drift — but
+// gently, never enough to crowd the shelf above.
+test('shelves follow the hill: they bow, and no two are cut the same', () => {
+  const shapes = new Set();
+  for (let ti = 0; ti < MAX_TERRACES; ti++) {
+    const ys = [40, 120, 200, 280, 350].map((x) => groundYAt(ti, x) - groundYOf(ti));
+    assert.ok(Math.max(...ys) - Math.min(...ys) > 15, `terrace ${ti + 1} is ruled nearly level`);
+    for (const d of ys) assert.ok(Math.abs(d) < 50, `terrace ${ti + 1} sweeps ${d.toFixed(1)} off its level`);
+    // they sweep a long way, but together: a shelf always has room for a bed
+    // and its wall under the shelf above
+    if (ti + 1 < MAX_TERRACES) {
+      for (let x = 0; x <= LAYOUT.width; x += 4) {
+        const gap = groundYAt(ti, x) - groundYAt(ti + 1, x);
+        assert.ok(gap >= LAYOUT.plantH + LAYOUT.wallH, `terraces ${ti + 1}/${ti + 2} pinch to ${gap.toFixed(1)} at x=${x}`);
+      }
+    }
+    shapes.add(ys.map((d) => d.toFixed(1)).join() + tileGeom(ti, 0).x.toFixed(1));
+  }
+  assert.equal(shapes.size, MAX_TERRACES, 'two shelves were cut identically');
+  const starts = new Set(Array.from({ length: MAX_TERRACES }, (_, i) => Math.round(tileGeom(i, 0).x)));
+  assert.ok(starts.size > 3, 'the rows of tiles line up in columns down the mountain');
 });
 
 test('a tile is big enough to hit with a thumb on a phone', () => {
@@ -62,7 +91,7 @@ test('a two-tile plot spans both tiles and the gap between them', () => {
   const p = plotGeom(2, 3, 2);
   assert.equal(p.x, a.x);
   assert.equal(p.x + p.w, b.x + b.w);
-  assert.equal(p.cx, (a.x + b.x + b.w) / 2);
+  assert.ok(Math.abs(p.cx - (a.x + b.x + b.w) / 2) < 1e-9);
   assert.equal(p.h, LAYOUT.treeH);
   assert.equal(plotGeom(2, 3, 1).h, LAYOUT.plantH);
 });
@@ -71,8 +100,9 @@ test('tapping a tile finds the tile that was drawn there, and nothing else', () 
   for (let ti = 0; ti < MAX_TERRACES; ti++) {
     for (let col = 0; col < COLS; col++) {
       const g = tileGeom(ti, col);
-      for (const y of [g.groundY - 1, g.groundY - LAYOUT.plantH, g.groundY + LAYOUT.wallH - 1]) {
-        for (const x of [g.x + 1, g.cx, g.x + g.w - 1]) {
+      for (const x of [g.x + 1, g.cx, g.x + g.w - 1]) {
+        const gy = groundYAt(ti, x);
+        for (const y of [gy - 1, gy - LAYOUT.plantH + 6, gy + LAYOUT.wallH - 1]) {
           assert.deepEqual(tileAtPoint(x, y, MAX_TERRACES), { ti, col }, `(${x}, ${y})`);
         }
       }
@@ -87,7 +117,7 @@ test('tapping a tile finds the tile that was drawn there, and nothing else', () 
 
 test('the bands are contiguous: anywhere over an owned shelf hits it', () => {
   const x = tileGeom(0, 2).cx;
-  for (let y = groundYOf(MAX_TERRACES - 1) - LAYOUT.bandH + LAYOUT.wallH + 1; y <= groundYOf(0) + LAYOUT.wallH; y += 3) {
+  for (let y = groundYAt(MAX_TERRACES - 1, x) - LAYOUT.bandH + LAYOUT.wallH + 1; y <= groundYAt(0, x) + LAYOUT.wallH; y += 3) {
     assert.ok(tileAtPoint(x, y, MAX_TERRACES), `a dead strip at y=${y}`);
   }
 });
@@ -98,7 +128,8 @@ test('the 出售 sign stands over the shelf it sells, clear of its price markers
     const t = terraceGeom(i);
     assert.ok(box.y + box.h <= t.groundY, 'the sign is buried in its shelf');
     if (i + 1 < MAX_TERRACES) {
-      assert.ok(box.y > groundYOf(i + 1) + LAYOUT.wallH - 10, 'the sign hangs over the shelf above');
+      const cx = box.x + box.w / 2;
+      assert.ok(box.y > groundYAt(i + 1, cx) + LAYOUT.wallH - 10, 'the sign hangs over the shelf above');
     }
     assert.ok(!overlaps(box, terracePriceBox(i)), `sign and marker overlap on terrace ${i + 1}`);
   }

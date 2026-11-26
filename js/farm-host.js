@@ -46,7 +46,7 @@ import {
   canBuy, priceOfSeed, priceOfTerrace, priceOfEquipment, priceOfStructure, priceOfFertilizer,
 } from './economy.js';
 import {
-  LAYOUT, groundYOf, tileGeom, plotGeom, tileAtPoint, forSaleBox,
+  LAYOUT, groundYOf, groundYAt, tileGeom, plotGeom, tileAtPoint, forSaleBox,
   maxScroll, scrollToTerrace,
 } from './farm-layout.js';
 import {
@@ -267,10 +267,14 @@ export function makeFarmHost({ canvas, save, getSettings, wallNow, loop, rng, on
       const cx = p ? plotGeom(ti, p.col, p.span).cx : t.cx;
       const wet = watered || (p && isPlant(p) && p.wateredUntilMs > now);
       ctx.save();
-      ctx.translate(cx, t.groundY);
+      ctx.translate(cx, groundYAt(ti, cx));
+      // the soil lies along the hill; the plants on it stand upright
+      ctx.save();
+      ctx.rotate(Math.atan2(groundYAt(ti, cx + w / 2) - groundYAt(ti, cx - w / 2), w));
       paintSoil(ctx, w, LAYOUT.soilH + 2, {
         wet, bare: !p, moisture: p ? moistureFor(terrace, p.col, p.span) : moistureAt(terrace, col),
       });
+      ctx.restore();
       if (!p && canSowAny && !moving) paintPlantHint(ctx, LAYOUT.plantH, tMs, motion);
       ctx.restore();
     }

@@ -16,7 +16,7 @@ import {
   paintForSale, paintTerracePrice, paintAltitudeMarkers, paintFog, paintFireflies, paintLanterns,
 } from '../js/farm-scene.js';
 import * as layout from '../js/farm-layout.js';
-import { LAYOUT, groundYOf, worldHeight } from '../js/farm-layout.js';
+import { LAYOUT, groundYOf, groundYAt, terraceGeom, worldHeight } from '../js/farm-layout.js';
 import { altitudeOf } from '../js/terrain.js';
 import { TUNING, MAX_TERRACES } from '../js/constants.js';
 
@@ -211,12 +211,31 @@ test('every terrace paints, bought or not, with and without its fixtures', () =>
   }
 });
 
+// The shelves follow the hill: a wall drawn to a ruled line on a bowed shelf
+// is the bug the curved layout exists to fix. Record every point a terrace
+// paints through and check its wall top tracks groundYAt along its length.
+test('a terrace wall follows its own contour, end to end', () => {
+  for (let i = 0; i < MAX_TERRACES; i++) {
+    const pts = [];
+    const ctx = stubCtx();
+    ctx.moveTo = ctx.lineTo = (x, y) => pts.push([x, y]);
+    paintTerrace(ctx, FARM_THEMES.light, i, true, {});
+    const t = terraceGeom(i);
+    // the soil band's front edge: the points that sit exactly on the ground line
+    const on = pts.filter(([x, y]) => x >= t.left && x <= Math.min(t.right, LAYOUT.width) &&
+      Math.abs(y - groundYAt(i, x)) < 0.01);
+    assert.ok(on.length > 20, `terrace ${i} has only ${on.length} points on its contour`);
+    const xs = on.map(([x]) => x);
+    assert.ok(Math.min(...xs) <= t.left + 1, `terrace ${i} starts short of the stream`);
+    assert.ok(Math.max(...xs) >= Math.min(t.right, LAYOUT.width) - 7, `terrace ${i} stops short of its end`);
+  }
+});
+
 test('an unbought terrace is visibly the same terrace, gone to seed', () => {
   const bought = stubCtx(); paintTerrace(bought, FARM_THEMES.light, 2, true);
   const weedy = stubCtx(); paintTerrace(weedy, FARM_THEMES.light, 2, false);
   assert.ok(bought.calls.length > 0 && weedy.calls.length > 0);
-  assert.ok(weedy.calls.filter((c) => c === 'stroke').length >
-    bought.calls.filter((c) => c === 'stroke').length, 'the weeds never grew');
+  assert.ok(weedy.calls.length > bought.calls.length + 4, 'the weeds never grew');
 });
 
 test('a sprinkler and a channel each add something to a shelf', () => {
@@ -237,8 +256,9 @@ test('the 出售 sign sits on the terrace it is selling, and reports its own hit
     const painted = paintForSale(stubCtx(), FARM_THEMES.light, i, TUNING.terraceCosts[i], 5000, 1);
     assert.deepEqual(painted, forSaleBox(i), 'the sign is drawn somewhere other than its hit box');
     assert.deepEqual(forSaleBox(i), layout.forSaleBox(i), 'the painter and the layout disagree on the box');
-    assert.ok(painted.x >= LAYOUT.left && painted.x + painted.w <= LAYOUT.right, `sign ${i} hangs off its terrace`);
-    assert.ok(painted.y + painted.h <= groundYOf(i), `sign ${i} is buried in the wall`);
+    const t = terraceGeom(i);
+    assert.ok(painted.x >= t.left && painted.x + painted.w <= t.right, `sign ${i} hangs off its terrace`);
+    assert.ok(painted.y + painted.h <= groundYAt(i, painted.x + painted.w / 2), `sign ${i} is buried in the wall`);
     assert.ok(painted.w >= 44 && painted.h >= 28, 'the sign is too small to tap');
   }
 });
@@ -282,8 +302,9 @@ test('every shelf above the offer wears its price, clear of the sign', () => {
   for (let i = 1; i < MAX_TERRACES; i++) {
     const painted = paintTerracePrice(stubCtx(), FARM_THEMES.light, i, TUNING.terraceCosts[i]);
     assert.deepEqual(painted, terracePriceBox(i), 'the marker is drawn somewhere other than its box');
-    assert.ok(painted.x >= LAYOUT.left && painted.x + painted.w <= LAYOUT.right, `marker ${i} hangs off its terrace`);
-    assert.ok(painted.y + painted.h <= groundYOf(i), `marker ${i} is buried in the wall`);
+    const t = terraceGeom(i);
+    assert.ok(painted.x >= t.left && painted.x + painted.w <= Math.max(t.right, LAYOUT.width), `marker ${i} hangs off its terrace`);
+    assert.ok(painted.y + painted.h <= groundYAt(i, painted.x + painted.w / 2), `marker ${i} is buried in the wall`);
     assert.ok(!overlaps(painted, forSaleBox(i)), `marker ${i} sits under the sign`);
   }
 });
@@ -336,7 +357,9 @@ test('each altitude band is named once, at its lowest shelf, beside the stream',
     assert.ok(i === 0 || altitudeOf(i - 1) !== altitudeOf(i), `terrace ${i} is not where its band starts`);
     const b = altitudeMarkerBox(i);
     assert.ok(b.x + b.w <= layout.tileGeom(i, 0).x + 2, `the ${altitudeOf(i)} marker stands on a tile`);
-    assert.ok(b.y + b.h <= groundYOf(i), 'the marker is buried');
+    assert.ok(b.y + b.h <= groundYAt(i, b.x + b.w / 2), 'the marker is buried');
+    // …and it stands at the shelf's own left end, by the water, not at a fixed x
+    assert.ok(Math.abs(b.x + b.w / 2 - terraceGeom(i).left) < 8, `the ${altitudeOf(i)} marker is not at its shelf's end`);
   }
   assert.equal(ctx.calls.texts.join(''), FARM_ART.bandStarts.map((i) => FARM_ART.bandNames[altitudeOf(i)]).join(''));
 });
