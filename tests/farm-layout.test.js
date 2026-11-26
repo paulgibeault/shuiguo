@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   LAYOUT, worldHeight, groundYOf, terraceGeom, tileW, tileGeom, plotGeom, tileAtPoint,
-  forSaleBox, terracePriceBox, maxScroll, scrollToTerrace, streamXAt, streamRightAt, groundYAt, streamCrossing, tilesBeforeStream,
+  forSaleBox, terracePriceBox, maxScroll, scrollToTerrace, streamXAt, streamRightAt, groundYAt, streamCrossing, tilesBeforeStream, streamWAt,
 } from '../js/farm-layout.js';
 import { WORLD, MAX_TERRACES, TUNING } from '../js/constants.js';
 
@@ -92,15 +92,18 @@ test('neighbouring terraces run nearly parallel, as contour lines do', () => {
     const gaps = [];
     for (let x = 0; x <= LAYOUT.width; x += 4) gaps.push(groundYAt(ti, x) - groundYAt(ti + 1, x));
     const spread = Math.max(...gaps) - Math.min(...gaps);
-    assert.ok(spread < 12, `terraces ${ti + 1}/${ti + 2} diverge by ${spread.toFixed(1)} along their length`);
+    assert.ok(spread < 16, `terraces ${ti + 1}/${ti + 2} diverge by ${spread.toFixed(1)} along their length`);
   }
 });
 
 test('the stream follows its valley smoothly, and grows on the way down', () => {
+  // …and it does wander: not one column from the spring to the foot
+  const xs = Array.from({ length: MAX_TERRACES }, (_, i) => streamCrossing(i).x);
+  assert.ok(Math.max(...xs) - Math.min(...xs) > 40, 'the stream falls straight down the hill');
   for (let ti = 0; ti + 1 < MAX_TERRACES; ti++) {
     const a = streamCrossing(ti), b = streamCrossing(ti + 1);
-    assert.ok(Math.abs(a.x - b.x) < 10, `the stream jumps ${Math.abs(a.x - b.x).toFixed(1)} between terraces ${ti + 1} and ${ti + 2}`);
-    assert.ok(a.hi - a.lo >= b.hi - b.lo - 0.5, `the stream is narrower below terrace ${ti + 2} than above it`);
+    assert.ok(Math.abs(a.x - b.x) < 30, `the stream jumps ${Math.abs(a.x - b.x).toFixed(1)} between terraces ${ti + 1} and ${ti + 2}`);
+    assert.ok(streamWAt(groundYOf(ti)) >= streamWAt(groundYOf(ti + 1)), `the stream is narrower below terrace ${ti + 2} than above it`);
   }
 });
 

@@ -91,9 +91,28 @@ function downhill(y) {
   return Math.max(0, Math.min(1, (y - top) / (foot - top)));
 }
 
-// The valley floor — the line the stream follows down the hill.
+// The valley floor: the line the hillside's crease follows as it climbs. It
+// wanders well across the hill, so each terrace's V sits somewhere new.
+function valleyAt(y) {
+  return 72 + Math.sin(y / 290 + 2.0) * 30 + Math.sin(y / 133 + 2.4) * 8;
+}
+
+// Where the stream is at world height y. It crosses every terrace at the
+// bottom of the valley — the point of that wall's V — and on the open slope
+// between two walls it swings out in a bend and back, alternating sides from
+// one terrace to the next, the way water winds down a hillside rather than
+// falling down it in a ruled line.
 export function streamCenterAt(y) {
-  return 50 + Math.sin(y / 520 + 0.9) * 16;
+  const v = valleyAt(y);
+  const fromFoot = (groundYOf(0) - y) / LAYOUT.bandH;   // terraces up from the bottom
+  const below = Math.floor(fromFoot);
+  if (below < 0 || below >= MAX_TERRACES - 1) return v;
+  const f = fromFoot - below;                            // 0 at a wall, 1 at the next one up
+  const side = below % 2 ? 1 : -1;
+  // sin² so the bend eases in and out: the stream meets each wall square on,
+  // at the point of its V, and does its wandering out on the open slope
+  const bend = Math.sin(Math.PI * f) ** 2 * (12 + 8 * downhill(y)) * side;
+  return v + bend;
 }
 
 // The spur's crest: a broad shoulder of hill right of the valley.
@@ -108,7 +127,7 @@ export function groundYAt(i, x) {
   const k = downhill(y0);
   const { valleyDepthTop, valleyDepthFoot, valleyW, spurHeight, spurW } = LAYOUT;
   const depth = valleyDepthTop + (valleyDepthFoot - valleyDepthTop) * k;
-  const valley = -depth * Math.exp(-Math.abs(x - streamCenterAt(y0)) / valleyW);
+  const valley = -depth * Math.exp(-Math.abs(x - valleyAt(y0)) / valleyW);
   const d = (x - spurAt(y0)) / spurW;
   const spur = spurHeight * (0.75 + 0.25 * k) * Math.exp(-d * d);
   return y0 + valley + spur;
@@ -143,7 +162,7 @@ export function streamCrossing(i) {
   const cx = streamCenterAt(groundYOf(i));
   const gy = groundYAt(i, cx);
   let lo = Infinity, hi = -Infinity;
-  for (let y = gy - 30; y <= gy + LAYOUT.wallH; y += 2) {
+  for (let y = gy - 14; y <= gy + LAYOUT.wallH; y += 2) {
     lo = Math.min(lo, streamXAt(y));
     hi = Math.max(hi, streamRightAt(y));
   }
@@ -161,17 +180,24 @@ function rowOf(i) {
   const { lo, hi } = streamCrossing(i);
   const span = (n) => (n > 0 ? n * w + (n - 1) * gap : 0);
   // All on the far bank if they fit there; otherwise the fewest on the near
-  // bank that leaves room for the rest; and if neither bank will quite do, the
-  // far group squeezes up to the water and the world's edge.
-  const fitsNear = (n) => n === 0 || shelfPad + span(n) <= lo - BANK;
-  const fitsFar = (n) => hi + BANK + span(cols - n) <= width - 2;
-  let near = 0;
-  while (near < cols && !(fitsNear(near) && fitsFar(near))) near++;
-  if (near === cols) near = 0;
-  const nearX = lo - BANK - span(near);
-  const farMin = hi + BANK;
-  const farMax = width - 2 - span(cols - near);
-  const farX = Math.min(farMax, farMin + jitter(i, 4) * Math.max(0, Math.min(18, farMax - farMin)));
+  // bank that leaves room for the rest. Tried first with comfortable margins
+  // and then, where the water happens to cross awkwardly, with tight ones —
+  // a row may hug the bank, but no tile ever stands in the stream.
+  for (const [bank, pad] of [[BANK, shelfPad], [1.5, 1.5]]) {
+    const fitsNear = (n) => n === 0 || pad + span(n) <= lo - bank;
+    const fitsFar = (n) => hi + bank + span(cols - n) <= width - pad;
+    let near = 0;
+    while (near < cols && !(fitsNear(near) && fitsFar(near))) near++;
+    if (near === cols) continue;
+    const nearX = lo - bank - span(near);
+    const farMin = hi + bank;
+    const farMax = width - pad - span(cols - near);
+    const farX = farMin + jitter(i, 4) * Math.max(0, Math.min(18, farMax - farMin));
+    return { near, nearX, farX };
+  }
+  // Unreachable with the stream this hill has; if a retune ever gets here the
+  // layout tests say so, rather than a tile quietly landing in the water.
+  const near = 0, nearX = 0, farX = width - span(cols);
   return { near, nearX, farX };
 }
 
