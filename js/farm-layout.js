@@ -29,16 +29,13 @@ export const LAYOUT = {
   tileW: 42,            // every tile the same width, so a thumb always fits …
   tileGap: 4,           // … and the ROW of them drifts a little shelf to shelf
   shelfPad: 6,          // shelf earth either side of the row, at the least
-  // The hill's own shape. Terraces are cut along contour lines, so a wall
-  // sweeps up and down the slope by a good part of a terrace — but its
-  // neighbours sweep with it, the way real contour lines run nearly parallel,
-  // so shelves never pinch together. `contourAmp` is the hill's swing; the
-  // shape drifts by `contourDrift` radians per terrace, so the top of the
-  // mountain is a different hillside from the bottom; and each shelf adds a
-  // little bow of its own.
-  contourAmp: 28,
-  contourDrift: 0.45,
-  contourOwn: 4,
+  // The hill's own shape (see groundYAt): a valley that carries the stream,
+  // and a spur of ridge to its right.
+  valleyDepthTop: 8,    // how far the contours kink uphill at the valley, at the spring …
+  valleyDepthFoot: 30,  // … and at the foot, where the stream has cut deeper
+  valleyW: 46,          // how quickly the valley's kink fades out either side
+  spurHeight: 20,       // how far the contours bulge downhill over the spur
+  spurW: 82,
   skyH: 200,            // world above the top terrace's ground line
   footH: 136,           // world below the bottom terrace's ground line: wall, road, house
   plantH: 70,           // height budget for a one-tile plant
@@ -69,34 +66,60 @@ export function groundYOf(i) {
   return worldHeight() - LAYOUT.footH - i * LAYOUT.bandH;
 }
 
-// The real ground line of terrace i at world x. A gentle bow plus a slight
-// tilt, both fixed per terrace, so the walls follow the hill like dry-stone
-// terraces do instead of ruling ten level lines across it. Small enough
-// (≤ ~9 units) that shelves never crowd each other.
+// ── the hill ───────────────────────────────────────────────────────────────
+//
+// The terraces are cut along CONTOUR LINES of one hillside, and the hillside
+// has a shape, so the terraces and the stream obey the two rules every real
+// contour map does:
+//
+//   where contours cross a valley they kink UPHILL, in a V pointing upstream —
+//   and the stream runs down the bottom of that valley, so it crosses every
+//   terrace exactly at the point of the V;
+//
+//   where they cross a spur of ridge they bulge DOWNHILL, in a broad U.
+//
+// Both features drift slowly across the hill as it climbs (a real valley
+// wanders, it does not zigzag), the valley is shallow near the spring and cut
+// deeper towards the foot, and the stream grows with it. Neighbouring
+// terraces therefore run almost parallel — what one shelf does, the one above
+// does slightly less of — which is what reads as terrain rather than noise.
+
+// How far down the hill world height y is: 0 at the top terrace, 1 at the foot.
+function downhill(y) {
+  const top = groundYOf(MAX_TERRACES - 1);
+  const foot = groundYOf(0);
+  return Math.max(0, Math.min(1, (y - top) / (foot - top)));
+}
+
+// The valley floor — the line the stream follows down the hill.
+export function streamCenterAt(y) {
+  return 50 + Math.sin(y / 520 + 0.9) * 16;
+}
+
+// The spur's crest: a broad shoulder of hill right of the valley.
+function spurAt(y) {
+  return 238 + Math.sin(y / 640 + 2.2) * 30;
+}
+
+// The ground line of terrace i at world x: its nominal level, kinked uphill
+// (smaller y) at the valley and bulged downhill over the spur.
 export function groundYAt(i, x) {
-  const { contourAmp, contourDrift, contourOwn, width } = LAYOUT;
-  const u = x / width;
-  // the hillside: one long sweep and a shorter swell, both drifting slowly
-  // from terrace to terrace
-  const hill = Math.sin(u * Math.PI * 1.3 + i * contourDrift + 0.8) * contourAmp
-    + Math.sin(u * Math.PI * 2.6 - i * contourDrift * 1.7 + 2.1) * contourAmp * 0.35;
-  // …and this shelf's own bow, so no two are the same line moved up
-  const own = Math.sin(u * Math.PI * (1.4 + jitter(i, 1)) + jitter(i, 2) * 6.28) * contourOwn;
-  return groundYOf(i) + hill + own;
+  const y0 = groundYOf(i);
+  const k = downhill(y0);
+  const { valleyDepthTop, valleyDepthFoot, valleyW, spurHeight, spurW } = LAYOUT;
+  const depth = valleyDepthTop + (valleyDepthFoot - valleyDepthTop) * k;
+  const valley = -depth * Math.exp(-Math.abs(x - streamCenterAt(y0)) / valleyW);
+  const d = (x - spurAt(y0)) / spurW;
+  const spur = spurHeight * (0.75 + 0.25 * k) * Math.exp(-d * d);
+  return y0 + valley + spur;
 }
 
 // ── the stream ─────────────────────────────────────────────────────────────
-// It meanders: two slow sine swings on its centre line, and its width breathes
-// between narrows and pools. The shelves start at its right bank, wherever
-// that is at their height.
+// It rises at a spring near the top as a trickle and gathers water on the way
+// down: narrow at the top, widest at the foot.
 
-export function streamCenterAt(y) {
-  // a wide, lazy meander out into the slope and back, with a smaller wiggle
-  // riding on it — a mountain stream finds its own way down
-  return 44 + Math.sin(y / 170 + 0.4) * 21 + Math.sin(y / 61 + 1.3) * 6;
-}
 export function streamWAt(y) {
-  return LAYOUT.streamW - 3 + Math.sin(y / 90 + 2) * 4;
+  return 12 + 15 * downhill(y);
 }
 // The stream's left bank at world height y.
 export function streamXAt(y) {

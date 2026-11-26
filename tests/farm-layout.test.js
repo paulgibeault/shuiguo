@@ -62,9 +62,46 @@ test('every shelf runs edge to edge, and its tiles part around the stream', () =
   }
 });
 
-test('the stream wanders: it crosses the shelves in different places', () => {
-  const xs = Array.from({ length: MAX_TERRACES }, (_, i) => streamCrossing(i).x);
-  assert.ok(Math.max(...xs) - Math.min(...xs) > 30, 'the stream runs straight down one column');
+// The terraces are contour lines of one hillside, so they obey a contour
+// map's rules. These are what make it read as terrain rather than noise.
+test('contours kink uphill where the stream crosses them, pointing upstream', () => {
+  for (let ti = 0; ti < MAX_TERRACES; ti++) {
+    let best = 0, bestY = Infinity;
+    for (let x = 0; x <= LAYOUT.width; x += 1) {
+      const y = groundYAt(ti, x);
+      if (y < bestY) { bestY = y; best = x; }
+    }
+    const { lo, hi } = streamCrossing(ti);
+    assert.ok(best >= lo && best <= hi, `terrace ${ti + 1} peaks at x=${best}, not at the stream (${lo.toFixed(0)}–${hi.toFixed(0)})`);
+  }
+});
+
+test('contours bulge downhill over a spur on the far side of the valley', () => {
+  for (let ti = 0; ti < MAX_TERRACES; ti++) {
+    let low = 0, lowY = -Infinity;
+    for (let x = 0; x <= LAYOUT.width; x += 1) {
+      const y = groundYAt(ti, x);
+      if (y > lowY) { lowY = y; low = x; }
+    }
+    assert.ok(low > streamCrossing(ti).hi + 60, `terrace ${ti + 1}'s spur is at x=${low}, on top of the valley`);
+  }
+});
+
+test('neighbouring terraces run nearly parallel, as contour lines do', () => {
+  for (let ti = 0; ti + 1 < MAX_TERRACES; ti++) {
+    const gaps = [];
+    for (let x = 0; x <= LAYOUT.width; x += 4) gaps.push(groundYAt(ti, x) - groundYAt(ti + 1, x));
+    const spread = Math.max(...gaps) - Math.min(...gaps);
+    assert.ok(spread < 12, `terraces ${ti + 1}/${ti + 2} diverge by ${spread.toFixed(1)} along their length`);
+  }
+});
+
+test('the stream follows its valley smoothly, and grows on the way down', () => {
+  for (let ti = 0; ti + 1 < MAX_TERRACES; ti++) {
+    const a = streamCrossing(ti), b = streamCrossing(ti + 1);
+    assert.ok(Math.abs(a.x - b.x) < 10, `the stream jumps ${Math.abs(a.x - b.x).toFixed(1)} between terraces ${ti + 1} and ${ti + 2}`);
+    assert.ok(a.hi - a.lo >= b.hi - b.lo - 0.5, `the stream is narrower below terrace ${ti + 2} than above it`);
+  }
 });
 
 // The point of the contour: ten shelves that are not ten copies of one ruled
