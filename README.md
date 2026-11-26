@@ -75,6 +75,32 @@ from the crate size) rather than set by a flag, so a stall added to the table
 later cannot be let onto the board by a field nobody remembered to set. The
 collection book is not gated: a first pear is a first pear wherever you made it.
 
+## The farm
+
+The campaign's other half is a terraced mountainside that grows what the
+stall sells (design and history: `docs/farm-plan.md`).
+
+- **Ten terraces of six tiles**, on a mountain that scrolls. Anything goes on
+  any tile it fits: beds and vines take one, trees and the sprawling melons
+  take two. Anything can be **moved** with its growth intact, **dug up** back
+  into the drawer, or a whole shelf **cleared** and laid out again.
+- **The lie of the land** (`js/terrain.js`): the stream runs down the left, so
+  soil goes wet → damp → dry across every shelf, and the shelves climb from
+  warm valley through hillside to cool ridge. Every fruit has a preference,
+  after where Taiwan grows it (pineapples low, pears high), and a spot is
+  graded in stars: a good one grows faster and an ideal one bears more. A
+  **pond** wets the tiles beside it, a **beehive** makes its neighbours bear
+  more, **compost** makes them grow faster, and a different crop next door
+  helps a little. Nothing ever fails — a poor spot is only slower.
+- **Rank** (`js/rank.js`): every fruit picked earns its face value in XP, and
+  eleven ranks each open named things — seeds, terraces, structures,
+  sprinklers, irrigation. The strip under the farm HUD shows the next rank and
+  what it opens; tapping it opens the **Almanac**, the whole ladder.
+- **Balance**: the merchant's premium tops out at ×3 (it was ×5, which let two
+  grown watermelons buy the mountain), and ranks gate the shop as well as
+  cash, paced by simulation so the first session reaches Grower and the top
+  of the mountain is weeks of casual play rather than an afternoon.
+
 ## Feel
 
 - Dropping locks input for a flat **450 ms** (`RULES.dropCooldownMs`), not

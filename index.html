@@ -56,6 +56,14 @@
            the crate is empty and nothing is ripening soon: a friend could use
            a hand, and the map is where the friends are. -->
       <button id="farm-to-menu" type="button">Map<span id="farm-badge" class="badge" hidden>🍓</span></button>
+      <!-- The rank strip: where the farmer is, how far to the next rank, and
+           what it opens. Tapping it opens the Almanac, the whole ladder on one
+           page — the campaign's answer to "what am I working towards?" -->
+      <button id="farm-rank" class="rank-strip" type="button" hidden aria-label="Farm rank — open the almanac">
+        <span class="rank-top"><b id="rank-title">Rank 1</b><span class="rank-book">Almanac 农历 ›</span></span>
+        <span class="rank-bar"><i id="rank-fill"></i></span>
+        <span id="rank-next" class="rank-next"></span>
+      </button>
     </header>
 
     <header id="market-hud" class="board-hud" hidden>
@@ -101,6 +109,20 @@
         <div class="crate-dock">
           <span class="rail-label">Crate <i>果筐</i></span>
           <div id="crate-strip" class="crate-strip" aria-label="Fruit left in the crate"></div>
+        </div>
+      </div>
+
+      <!-- The farm's over-canvas tools: the bulk verbs once there is more than
+           one of a thing to do, and the banner that says something is being
+           moved and how to stop moving it. -->
+      <div id="farm-tools" class="farm-tools" hidden>
+        <div id="move-banner" class="move-banner" role="status" hidden>
+          <span id="move-text"></span>
+          <button id="move-cancel" type="button">Cancel</button>
+        </div>
+        <div class="bulk">
+          <button id="harvest-all" class="go" type="button" hidden>Pick all</button>
+          <button id="water-all" type="button" hidden>Water all</button>
         </div>
       </div>
 
@@ -276,6 +298,14 @@
       <div id="plot-seeds" class="shop-grid"></div>
       <div id="plot-rows" class="shop-rows"></div>
       <button id="plot-close" type="button">Close</button>
+    </section>
+
+    <section id="almanac" class="sheet bottom" hidden>
+      <button id="almanac-x" class="sheet-x" type="button" aria-label="Close">✕</button>
+      <h2>Almanac 农历</h2>
+      <p id="almanac-now" class="hint"></p>
+      <ol id="almanac-list" class="almanac"></ol>
+      <button id="almanac-close" type="button">Close</button>
     </section>
 
     <section id="appraisal" class="sheet" hidden>

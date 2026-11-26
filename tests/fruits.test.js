@@ -70,6 +70,21 @@ test('every fruit is growable: one FARM row per FRUITS row', () => {
   });
 });
 
+test('every fruit says how much ground it takes, when it opens, and where it likes to grow', () => {
+  FRUITS.forEach((f, i) => {
+    const row = farmOf(i + 1);
+    assert.ok(row.span === 1 || row.span === 2, `${f.name} takes ${row.span} tiles`);
+    assert.ok(row.span < TUNING.tilesPerTerrace, `${f.name} is wider than a terrace`);
+    assert.ok(Number.isInteger(row.rank) && row.rank >= 1, `${f.name} has no rank`);
+    assert.ok(['low', 'mid', 'high', 'any'].includes(row.alt), `${f.name} likes altitude ${row.alt}`);
+    assert.ok(['wet', 'damp', 'dry', 'any'].includes(row.water), `${f.name} likes ${row.water} soil`);
+  });
+  // a tree's crown is two tiles wide; a vine climbs its own trellis in one
+  FRUITS.forEach((f, i) => {
+    if (farmOf(i + 1).kind === 'tree') assert.equal(farmOf(i + 1).span, 2, `${f.name} is a one-tile tree`);
+  });
+});
+
 test('perennials cycle, annuals do not — and only the grape needs a trellis', () => {
   FRUITS.forEach((f, i) => {
     const level = i + 1;
@@ -167,10 +182,13 @@ test('TUNING keeps the player solvent: the first appraisal always buys the farm'
 test('TUNING knobs are in range, and seedDripChance can be switched clean off', () => {
   assert.ok(TUNING.seedDripChance >= 0 && TUNING.seedDripChance <= 1);
   assert.ok(TUNING.tidyBonus > 0 && TUNING.tidyBonus < 1);
-  assert.ok(Number.isInteger(TUNING.plotsPerTerrace) && TUNING.plotsPerTerrace > 0);
-  assert.ok(TUNING.treePlotsPerTerrace > 0 && TUNING.treePlotsPerTerrace < TUNING.plotsPerTerrace,
-    'every terrace needs both a tree plot and beds');
+  assert.ok(Number.isInteger(TUNING.tilesPerTerrace) && TUNING.tilesPerTerrace >= 4,
+    'a terrace too narrow to hold a tree beside a bed is not a terrace');
   assert.equal(MAX_TERRACES, TUNING.terraceCosts.length);
+  assert.equal(TUNING.terraceRanks.length, TUNING.terraceCosts.length, 'every terrace needs a rank');
+  for (let i = 1; i < TUNING.terraceRanks.length; i++) {
+    assert.ok(TUNING.terraceRanks[i] >= TUNING.terraceRanks[i - 1], `terrace ${i + 1} opens before the one below it`);
+  }
   assert.equal(TUNING.terraceCosts[0], 0, 'terrace 1 is the starter farm, bought as a farm');
   for (let i = 2; i < TUNING.terraceCosts.length; i++) {
     assert.ok(TUNING.terraceCosts[i] > TUNING.terraceCosts[i - 1], `terrace ${i + 1} is not dearer than the last`);
